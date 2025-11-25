@@ -28,8 +28,21 @@ def trigger_dag(airflow_url: str, dag_id: str, username: str, password: str) -> 
     auth = (username, password)
     payload = {"conf": {}}
     
+    # Ensure URL doesn't have trailing slash
+    url = url.rstrip('/')
+    
     try:
+        print(f"Attempting to trigger DAG at: {url}")
         response = requests.post(url, auth=auth, json=payload, timeout=10)
+        
+        if response.status_code == 401:
+            print(f"✗ Authentication failed (401 Unauthorized)")
+            print(f"  Please verify:")
+            print(f"    - AIRFLOW_USERNAME is correct (current: {username})")
+            print(f"    - AIRFLOW_PASSWORD is correct")
+            print(f"    - Airflow instance allows REST API access")
+            return None
+        
         response.raise_for_status()
         
         data = response.json()
@@ -40,6 +53,7 @@ def trigger_dag(airflow_url: str, dag_id: str, username: str, password: str) -> 
     except requests.exceptions.RequestException as e:
         print(f"✗ Failed to trigger DAG: {e}")
         if hasattr(e, 'response') and e.response is not None:
+            print(f"  Status Code: {e.response.status_code}")
             print(f"  Response: {e.response.text}")
         return None
 
@@ -113,12 +127,28 @@ def main():
     
     print(f"Airflow URL: {airflow_url}")
     print(f"DAG ID: {dag_id}")
+    print(f"Username: {username}")
+    print(f"Password: {'*' * len(password) if password else 'NOT SET'}")
+    
+    # Validate credentials are set
+    if not username or not password:
+        print("\n✗ Error: AIRFLOW_USERNAME and AIRFLOW_PASSWORD must be set")
+        return 1
+    
+    if not airflow_url:
+        print("\n✗ Error: AIRFLOW_URL must be set")
+        return 1
     
     # Trigger DAG
     dag_run_id = trigger_dag(airflow_url, dag_id, username, password)
     
     if not dag_run_id:
         print("\n✗ Failed to trigger DAG")
+        print("\nTroubleshooting:")
+        print("  1. Verify AIRFLOW_URL is correct and accessible")
+        print("  2. Verify AIRFLOW_USERNAME and AIRFLOW_PASSWORD are correct")
+        print("  3. Check that the DAG exists and is enabled in Airflow")
+        print("  4. Ensure Airflow REST API is enabled")
         return 1
     
     # Wait for completion
