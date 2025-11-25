@@ -25,13 +25,29 @@ def find_latest_selection_report() -> Optional[Path]:
     """Find the latest model selection report in best-model-responses"""
     best_model_dir = outputs_dir / "best-model-responses"
     if not best_model_dir.exists():
+        print(f"  Directory does not exist: {best_model_dir}")
         return None
     
-    # Look for model_selection_report.json
-    reports = list(best_model_dir.rglob("model_selection_report.json"))
-    if reports:
-        return max(reports, key=lambda p: p.stat().st_mtime)
+    # Debug: List all JSON files found
+    all_json_files = list(best_model_dir.rglob("*.json"))
+    if all_json_files:
+        print(f"  Found {len(all_json_files)} JSON files:")
+        for f in sorted(all_json_files)[:10]:  # Show first 10
+            print(f"    - {f.relative_to(best_model_dir)}")
     
+    # Look for model_selection_report.json (exact match)
+    reports = list(best_model_dir.rglob("model_selection_report.json"))
+    
+    # Also try pattern matching for variations
+    if not reports:
+        reports = list(best_model_dir.rglob("*model_selection*.json"))
+    
+    if reports:
+        latest = max(reports, key=lambda p: p.stat().st_mtime)
+        print(f"  Using report: {latest.relative_to(best_model_dir)}")
+        return latest
+    
+    print(f"  No model selection report found in {best_model_dir}")
     return None
 
 def main():
@@ -44,9 +60,11 @@ def main():
         thresholds = load_thresholds()
         print("✓ Loaded bias thresholds")
         
+        print("\nSearching for model selection report...")
         selection_report_path = find_latest_selection_report()
         if not selection_report_path:
             print("✗ No model selection report found")
+            print(f"  Searched in: {outputs_dir / 'best-model-responses'}")
             return 1
         
         print(f"✓ Found selection report: {selection_report_path.name}")

@@ -115,6 +115,23 @@ def main():
         print(f"\n✓ Downloaded {len(downloaded)} files")
         print(f"  Local directory: {outputs_dir}/best-model-responses")
         
+        # Debug: List some key files that should exist
+        best_model_dir = outputs_dir / "best-model-responses"
+        if best_model_dir.exists():
+            selection_reports = list(best_model_dir.rglob("*model_selection*.json"))
+            if selection_reports:
+                print(f"\n  Found {len(selection_reports)} model selection report(s):")
+                for report in selection_reports:
+                    print(f"    - {report.relative_to(best_model_dir)}")
+            else:
+                print(f"\n  ⚠ No model selection reports found in {best_model_dir}")
+                # List first few JSON files for debugging
+                json_files = list(best_model_dir.rglob("*.json"))[:5]
+                if json_files:
+                    print(f"  Sample JSON files found:")
+                    for f in json_files:
+                        print(f"    - {f.relative_to(best_model_dir)}")
+        
         return 0
         
     except Exception as e:
