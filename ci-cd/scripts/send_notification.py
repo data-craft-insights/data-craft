@@ -143,16 +143,23 @@ def send_email(config: Dict, status: str, workflow_url: Optional[str] = None):
         print("   Set EMAIL_SMTP_PASSWORD environment variable to enable email notifications")
         return
     
+    # Ensure password is a string (not bytes)
+    if isinstance(smtp_password, bytes):
+        smtp_password = smtp_password.decode('utf-8')
+    smtp_password = str(smtp_password)
+    smtp_user = str(smtp_user)
+    
     summary = get_pipeline_summary()
     body = create_email_body(status, summary, workflow_url)
     
     # Create message
     msg = MIMEMultipart()
-    msg['From'] = email_config['from_email']
-    msg['To'] = email_config['to_email']
+    msg['From'] = str(email_config['from_email'])
+    msg['To'] = str(email_config['to_email'])
     msg['Subject'] = f"Model Training CI/CD: {status.upper()}"
     
-    msg.attach(MIMEText(body, 'plain'))
+    # Attach body with explicit encoding
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))
     
     # Send email
     try:
@@ -167,6 +174,8 @@ def send_email(config: Dict, status: str, workflow_url: Optional[str] = None):
         
     except Exception as e:
         print(f"⚠ Failed to send email: {e}")
+        import traceback
+        traceback.print_exc()
 
 def main():
     """Main notification function"""

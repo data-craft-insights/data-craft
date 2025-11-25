@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - sanskar-ci-cd
+      # - sanskar-ci-cd
     paths:
       - 'model-training/data/user_queries.txt'
       - 'model-training/scripts/**'
