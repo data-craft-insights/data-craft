@@ -23,44 +23,75 @@ def load_config():
 
 def create_airflow_session(airflow_url: str, username: str, password: str) -> Optional[requests.Session]:
     """
-    Create authenticated session with Airflow using login endpoint
-    Airflow 2.x requires session-based authentication
+    Create authenticated session with Airflow
+    Tries multiple authentication methods for compatibility
     """
     session = requests.Session()
     
     # Ensure URL doesn't have trailing slash
     base_url = airflow_url.rstrip('/')
-    login_url = f"{base_url}/api/v1/security/login"
     
+    print(f"Authenticating with Airflow at: {base_url}")
+    
+    # Method 1: Try basic auth directly (works for some Airflow configurations)
+    print("  Trying basic authentication...")
+    test_url = f"{base_url}/api/v1/health"
     try:
-        # Login to get session cookie
-        login_payload = {
-            "username": username,
-            "password": password,
-            "provider": "db"  # Use database provider (default for Airflow)
-        }
-        
-        print(f"Authenticating with Airflow at: {base_url}")
-        response = session.post(login_url, json=login_payload, timeout=10)
-        
+        response = session.get(test_url, auth=(username, password), timeout=10)
         if response.status_code == 200:
-            print("✓ Authentication successful")
+            print("✓ Authentication successful (basic auth)")
+            # Set auth for all future requests
+            session.auth = (username, password)
             return session
-        elif response.status_code == 401:
-            print(f"✗ Authentication failed (401 Unauthorized)")
-            print(f"  Please verify:")
-            print(f"    - AIRFLOW_USERNAME is correct (current: {username})")
-            print(f"    - AIRFLOW_PASSWORD is correct")
-            print(f"    - Airflow instance allows REST API access")
-            return None
-        else:
-            print(f"✗ Login failed with status {response.status_code}")
-            print(f"  Response: {response.text}")
-            return None
+    except Exception as e:
+        print(f"    Basic auth test failed: {e}")
+    
+    # Method 2: Try session-based login with different endpoints
+    login_endpoints = [
+        "/api/v1/security/login",
+        "/api/v1/auth/login",
+        "/login"
+    ]
+    
+    for login_endpoint in login_endpoints:
+        login_url = f"{base_url}{login_endpoint}"
+        try:
+            print(f"  Trying login endpoint: {login_url}")
             
-    except requests.exceptions.RequestException as e:
-        print(f"✗ Failed to authenticate: {e}")
-        return None
+            # Try different payload formats
+            login_payloads = [
+                {
+                    "username": username,
+                    "password": password,
+                    "provider": "db"
+                },
+                {
+                    "username": username,
+                    "password": password
+                }
+            ]
+            
+            for payload in login_payloads:
+                response = session.post(login_url, json=payload, timeout=10)
+                
+                if response.status_code == 200:
+                    print(f"✓ Authentication successful (session-based)")
+                    return session
+                elif response.status_code == 404:
+                    # Endpoint doesn't exist, try next one
+                    break
+                elif response.status_code == 401:
+                    print(f"    Authentication failed with this endpoint")
+                    continue
+                    
+        except requests.exceptions.RequestException as e:
+            # Continue to next endpoint
+            continue
+    
+    # If all methods fail, try basic auth for API calls anyway
+    print("  Falling back to basic auth for API calls...")
+    session.auth = (username, password)
+    return session
 
 def trigger_dag(session: requests.Session, airflow_url: str, dag_id: str) -> Optional[str]:
     """Trigger DAG and return DAG run ID"""
