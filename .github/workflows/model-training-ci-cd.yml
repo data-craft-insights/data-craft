@@ -230,15 +230,6 @@ jobs:
           name: model-outputs
         continue-on-error: true
 
-      - name: Determine mode
-        id: mode
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
-          else
-            echo "mode=prod" >> $GITHUB_OUTPUT
-          fi
-
       - name: Send Email Notification
         env:
           EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
@@ -246,5 +237,4 @@ jobs:
         run: |
           python ci-cd/scripts/send_notification.py \
             --status ${{ job.status }} \
-            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} \
-            --mode ${{ steps.mode.outputs.mode }}
+            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
