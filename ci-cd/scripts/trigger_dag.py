@@ -21,26 +21,60 @@ def load_config():
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def trigger_dag(airflow_url: str, dag_id: str, username: str, password: str) -> Optional[str]:
-    """Trigger DAG and return DAG run ID"""
-    url = f"{airflow_url}/api/v1/dags/{dag_id}/dagRuns"
-    
-    auth = (username, password)
-    payload = {"conf": {}}
+def create_airflow_session(airflow_url: str, username: str, password: str) -> Optional[requests.Session]:
+    """
+    Create authenticated session with Airflow using login endpoint
+    Airflow 2.x requires session-based authentication
+    """
+    session = requests.Session()
     
     # Ensure URL doesn't have trailing slash
-    url = url.rstrip('/')
+    base_url = airflow_url.rstrip('/')
+    login_url = f"{base_url}/api/v1/security/login"
     
     try:
-        print(f"Attempting to trigger DAG at: {url}")
-        response = requests.post(url, auth=auth, json=payload, timeout=10)
+        # Login to get session cookie
+        login_payload = {
+            "username": username,
+            "password": password,
+            "provider": "db"  # Use database provider (default for Airflow)
+        }
         
-        if response.status_code == 401:
+        print(f"Authenticating with Airflow at: {base_url}")
+        response = session.post(login_url, json=login_payload, timeout=10)
+        
+        if response.status_code == 200:
+            print("✓ Authentication successful")
+            return session
+        elif response.status_code == 401:
             print(f"✗ Authentication failed (401 Unauthorized)")
             print(f"  Please verify:")
             print(f"    - AIRFLOW_USERNAME is correct (current: {username})")
             print(f"    - AIRFLOW_PASSWORD is correct")
             print(f"    - Airflow instance allows REST API access")
+            return None
+        else:
+            print(f"✗ Login failed with status {response.status_code}")
+            print(f"  Response: {response.text}")
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"✗ Failed to authenticate: {e}")
+        return None
+
+def trigger_dag(session: requests.Session, airflow_url: str, dag_id: str) -> Optional[str]:
+    """Trigger DAG and return DAG run ID"""
+    base_url = airflow_url.rstrip('/')
+    url = f"{base_url}/api/v1/dags/{dag_id}/dagRuns"
+    
+    payload = {"conf": {}}
+    
+    try:
+        print(f"Attempting to trigger DAG at: {url}")
+        response = session.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 401:
+            print(f"✗ Authentication expired or invalid")
             return None
         
         response.raise_for_status()
@@ -57,14 +91,13 @@ def trigger_dag(airflow_url: str, dag_id: str, username: str, password: str) -> 
             print(f"  Response: {e.response.text}")
         return None
 
-def get_dag_run_status(airflow_url: str, dag_id: str, dag_run_id: str, username: str, password: str) -> Optional[str]:
+def get_dag_run_status(session: requests.Session, airflow_url: str, dag_id: str, dag_run_id: str) -> Optional[str]:
     """Get DAG run status"""
-    url = f"{airflow_url}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
-    
-    auth = (username, password)
+    base_url = airflow_url.rstrip('/')
+    url = f"{base_url}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
     
     try:
-        response = requests.get(url, auth=auth, timeout=10)
+        response = session.get(url, timeout=10)
         response.raise_for_status()
         
         data = response.json()
@@ -76,11 +109,10 @@ def get_dag_run_status(airflow_url: str, dag_id: str, dag_run_id: str, username:
         return None
 
 def wait_for_dag_completion(
+    session: requests.Session,
     airflow_url: str,
     dag_id: str,
     dag_run_id: str,
-    username: str,
-    password: str,
     max_wait_minutes: int = 30,
     poll_interval_seconds: int = 30
 ) -> int:
@@ -98,7 +130,7 @@ def wait_for_dag_completion(
             print(f"\n✗ Timeout: DAG did not complete within {max_wait_minutes} minutes")
             return 1
         
-        state = get_dag_run_status(airflow_url, dag_id, dag_run_id, username, password)
+        state = get_dag_run_status(session, airflow_url, dag_id, dag_run_id)
         
         if state != last_state:
             print(f"  DAG state: {state} (elapsed: {int(elapsed/60)}m {int(elapsed%60)}s)")
@@ -139,20 +171,28 @@ def main():
         print("\n✗ Error: AIRFLOW_URL must be set")
         return 1
     
+    # Create authenticated session
+    session = create_airflow_session(airflow_url, username, password)
+    if not session:
+        print("\n✗ Failed to authenticate with Airflow")
+        print("\nTroubleshooting:")
+        print("  1. Verify AIRFLOW_URL is correct and accessible")
+        print("  2. Verify AIRFLOW_USERNAME and AIRFLOW_PASSWORD are correct")
+        print("  3. Ensure Airflow REST API is enabled")
+        return 1
+    
     # Trigger DAG
-    dag_run_id = trigger_dag(airflow_url, dag_id, username, password)
+    dag_run_id = trigger_dag(session, airflow_url, dag_id)
     
     if not dag_run_id:
         print("\n✗ Failed to trigger DAG")
         print("\nTroubleshooting:")
-        print("  1. Verify AIRFLOW_URL is correct and accessible")
-        print("  2. Verify AIRFLOW_USERNAME and AIRFLOW_PASSWORD are correct")
-        print("  3. Check that the DAG exists and is enabled in Airflow")
-        print("  4. Ensure Airflow REST API is enabled")
+        print("  1. Check that the DAG exists and is enabled in Airflow")
+        print("  2. Verify the DAG ID is correct: model_pipeline_with_evaluation")
         return 1
     
     # Wait for completion
-    result = wait_for_dag_completion(airflow_url, dag_id, dag_run_id, username, password)
+    result = wait_for_dag_completion(session, airflow_url, dag_id, dag_run_id)
     
     return result
 
