@@ -12,8 +12,8 @@ on:
       - '.github/workflows/model-training-ci-cd.yml'
   workflow_dispatch:  # Allow manual triggering
     inputs:
-      environment:
-        description: 'Deployment Environment'
+      mode:
+        description: 'Run mode'
         required: true
         default: 'prod'
         type: choice
@@ -29,8 +29,7 @@ jobs:
   trigger_dag:
     name: Trigger Airflow DAG
     runs-on: ubuntu-latest
-    # Skip this job if environment is 'local'
-    if: github.event_name == 'push' || github.event.inputs.environment != 'local'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'prod')
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -45,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests pyyaml
+          pip install requests
           pip install -r requirements.txt
 
       - name: Trigger DAG and Wait
@@ -57,30 +56,11 @@ jobs:
         run: |
           python ci-cd/scripts/trigger_dag.py || exit 1
 
-  skip_trigger_local:
-    name: Skip Airflow DAG (Local Environment)
-    runs-on: ubuntu-latest
-    # Only run if manual trigger with 'local' environment
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'local'
-    steps:
-      - name: Log skip message
-        run: |
-          echo "=================================================="
-          echo "SKIPPING AIRFLOW DAG TRIGGER"
-          echo "=================================================="
-          echo "Environment: local"
-          echo "Reason: Running in local development mode"
-          echo "The pipeline will proceed with local outputs"
-          echo "=================================================="
-
   download_outputs:
     name: Download Model Outputs
-    needs: [trigger_dag]
+    needs: trigger_dag
     runs-on: ubuntu-latest
-    # Run if trigger_dag succeeded OR if it was skipped (local mode)
-    if: |
-      always() && 
-      (needs.trigger_dag.result == 'success' || needs.trigger_dag.result == 'skipped')
+    if: always() && ((github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'local') || needs.trigger_dag.result == 'success' || needs.trigger_dag.result == 'skipped')
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -191,21 +171,14 @@ jobs:
           python ci-cd/scripts/rollback_manager.py || exit 1
 
       - name: Push to Production Registry
-        # Only deploy to production if not in local mode
-        if: github.event_name == 'push' || github.event.inputs.environment != 'local'
         run: |
           python ci-cd/scripts/push_to_registry.py --commit-sha ${{ steps.commit.outputs.sha }}
 
-      - name: Skip deployment (Local Mode)
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'local'
-        run: |
-          echo "Skipping production deployment - running in local mode"
-
   notify:
     name: Send Notifications
-    needs: [trigger_dag, skip_trigger_local, validate, check_bias, compare_and_deploy]
+    needs: [trigger_dag, validate, check_bias, compare_and_deploy]
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && ((github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'local') || needs.trigger_dag.result == 'success' || needs.trigger_dag.result == 'skipped')
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -219,24 +192,12 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: model-outputs
-        continue-on-error: true
-
-      - name: Determine environment
-        id: env
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
-          else
-            echo "environment=prod" >> $GITHUB_OUTPUT
-          fi
 
       - name: Send Email Notification
         env:
           EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
-          ENVIRONMENT: ${{ steps.env.outputs.environment }}
         run: |
           python ci-cd/scripts/send_notification.py \
             --status ${{ job.status }} \
-            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} \
-            --environment ${ENVIRONMENT}
+            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
