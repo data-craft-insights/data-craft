@@ -24,7 +24,7 @@ def load_config():
 def create_airflow_session(airflow_url: str, username: str, password: str) -> Optional[requests.Session]:
     """
     Create authenticated session with Airflow
-    Tries multiple authentication methods for compatibility
+    Tests authentication by hitting the health endpoint
     """
     session = requests.Session()
     
@@ -33,76 +33,22 @@ def create_airflow_session(airflow_url: str, username: str, password: str) -> Op
     
     print(f"Authenticating with Airflow at: {base_url}")
     
-    # Method 1: Try basic auth directly (works for some Airflow configurations)
-    print("  Trying basic authentication...")
+    # Test authentication with health endpoint
+    print("  Testing authentication...")
     test_url = f"{base_url}/api/v1/health"
     try:
         response = session.get(test_url, auth=(username, password), timeout=10)
         if response.status_code == 200:
-            print("✓ Authentication successful (basic auth)")
-            # Set auth for all future requests in this session
-            session.auth = (username, password)
-            # Verify it works by testing another endpoint
-            test_dag_url = f"{base_url}/api/v1/dags"
-            test_response = session.get(test_dag_url, timeout=10)
-            if test_response.status_code == 200:
-                print("✓ Session auth verified")
-                return session
-            else:
-                print(f"    Warning: Health check passed but DAG endpoint returned {test_response.status_code}")
-                # Still return session, auth is set
-                return session
+            print("✓ Authentication successful")
+            return session
+        else:
+            print(f"✗ Authentication failed: {response.status_code}")
+            return None
     except Exception as e:
-        print(f"    Basic auth test failed: {e}")
-    
-    # Method 2: Try session-based login with different endpoints
-    login_endpoints = [
-        "/api/v1/security/login",
-        "/api/v1/auth/login",
-        "/login"
-    ]
-    
-    for login_endpoint in login_endpoints:
-        login_url = f"{base_url}{login_endpoint}"
-        try:
-            print(f"  Trying login endpoint: {login_url}")
-            
-            # Try different payload formats
-            login_payloads = [
-                {
-                    "username": username,
-                    "password": password,
-                    "provider": "db"
-                },
-                {
-                    "username": username,
-                    "password": password
-                }
-            ]
-            
-            for payload in login_payloads:
-                response = session.post(login_url, json=payload, timeout=10)
-                
-                if response.status_code == 200:
-                    print(f"✓ Authentication successful (session-based)")
-                    return session
-                elif response.status_code == 404:
-                    # Endpoint doesn't exist, try next one
-                    break
-                elif response.status_code == 401:
-                    print(f"    Authentication failed with this endpoint")
-                    continue
-                    
-        except requests.exceptions.RequestException as e:
-            # Continue to next endpoint
-            continue
-    
-    # If all methods fail, try basic auth for API calls anyway
-    print("  Falling back to basic auth for API calls...")
-    session.auth = (username, password)
-    return session
+        print(f"✗ Authentication test failed: {e}")
+        return None
 
-def trigger_dag(session: requests.Session, airflow_url: str, dag_id: str, username: str = None, password: str = None) -> Optional[str]:
+def trigger_dag(session: requests.Session, airflow_url: str, dag_id: str, username: str, password: str) -> Optional[str]:
     """Trigger DAG and return DAG run ID"""
     base_url = airflow_url.rstrip('/')
     url = f"{base_url}/api/v1/dags/{dag_id}/dagRuns"
@@ -112,24 +58,13 @@ def trigger_dag(session: requests.Session, airflow_url: str, dag_id: str, userna
     try:
         print(f"Attempting to trigger DAG at: {url}")
         
-        # Ensure auth is used - if session.auth is set, it will be used automatically
-        # If not, use explicit auth parameter
-        if session.auth:
-            response = session.post(url, json=payload, timeout=10)
-        elif username and password:
-            response = session.post(url, json=payload, auth=(username, password), timeout=10)
-        else:
-            response = session.post(url, json=payload, timeout=10)
+        # Always use explicit auth parameter for reliability
+        response = session.post(url, json=payload, auth=(username, password), timeout=10)
         
         if response.status_code == 401:
-            print(f"✗ Authentication expired or invalid (401)")
+            print(f"✗ Authentication failed (401)")
             print(f"  Response: {response.text}")
-            # Try with explicit auth if session auth didn't work
-            if username and password and not session.auth:
-                print("  Retrying with explicit credentials...")
-                response = session.post(url, json=payload, auth=(username, password), timeout=10)
-                if response.status_code == 401:
-                    return None
+            return None
         
         response.raise_for_status()
         
@@ -145,13 +80,13 @@ def trigger_dag(session: requests.Session, airflow_url: str, dag_id: str, userna
             print(f"  Response: {e.response.text}")
         return None
 
-def get_dag_run_status(session: requests.Session, airflow_url: str, dag_id: str, dag_run_id: str) -> Optional[str]:
+def get_dag_run_status(session: requests.Session, airflow_url: str, dag_id: str, dag_run_id: str, username: str, password: str) -> Optional[str]:
     """Get DAG run status"""
     base_url = airflow_url.rstrip('/')
     url = f"{base_url}/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}"
     
     try:
-        response = session.get(url, timeout=10)
+        response = session.get(url, auth=(username, password), timeout=10)
         response.raise_for_status()
         
         data = response.json()
@@ -167,6 +102,8 @@ def wait_for_dag_completion(
     airflow_url: str,
     dag_id: str,
     dag_run_id: str,
+    username: str,
+    password: str,
     max_wait_minutes: int = 30,
     poll_interval_seconds: int = 30
 ) -> int:
@@ -184,7 +121,7 @@ def wait_for_dag_completion(
             print(f"\n✗ Timeout: DAG did not complete within {max_wait_minutes} minutes")
             return 1
         
-        state = get_dag_run_status(session, airflow_url, dag_id, dag_run_id)
+        state = get_dag_run_status(session, airflow_url, dag_id, dag_run_id, username, password)
         
         if state != last_state:
             print(f"  DAG state: {state} (elapsed: {int(elapsed/60)}m {int(elapsed%60)}s)")
@@ -235,7 +172,7 @@ def main():
         print("  3. Ensure Airflow REST API is enabled")
         return 1
     
-    # Trigger DAG (pass credentials as backup if session auth fails)
+    # Trigger DAG
     dag_run_id = trigger_dag(session, airflow_url, dag_id, username, password)
     
     if not dag_run_id:
@@ -247,10 +184,9 @@ def main():
         return 1
     
     # Wait for completion
-    result = wait_for_dag_completion(session, airflow_url, dag_id, dag_run_id)
+    result = wait_for_dag_completion(session, airflow_url, dag_id, dag_run_id, username, password)
     
     return result
 
 if __name__ == "__main__":
     sys.exit(main())
-
