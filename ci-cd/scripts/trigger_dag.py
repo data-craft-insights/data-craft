@@ -152,7 +152,7 @@ def wait_for_dag_completion(
     dag_run_id: str,
     username: str,
     password: str,
-    max_wait_minutes: int = 30,
+    max_wait_minutes: int = 60,
     poll_interval_seconds: int = 30
 ) -> int:
     """Wait for DAG to complete, return 0 on success, 1 on failure"""
