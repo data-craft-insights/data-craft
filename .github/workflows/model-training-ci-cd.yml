@@ -89,7 +89,7 @@ jobs:
         if: always()
         with:
           name: model-outputs
-          path: outputs/**
+          path: outputs
           retention-days: 7
 
   validate:
@@ -116,16 +116,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
+          path: .
 
       - name: Debug - List downloaded files
         run: |
           echo "Current directory: $(pwd)"
+          echo "Listing current directory contents:"
+          ls -la | head -20
+          echo ""
           echo "Listing outputs directory:"
           ls -la outputs/ || echo "outputs/ does not exist"
+          echo ""
           echo "Listing best-model-responses if it exists:"
           ls -la outputs/best-model-responses/ || echo "outputs/best-model-responses/ does not exist"
+          echo ""
           echo "Finding all JSON files:"
-          find outputs -name "*.json" -type f | head -20 || echo "No JSON files found"
+          find . -name "*.json" -type f | head -20 || echo "No JSON files found"
+          echo ""
+          echo "Finding outputs directory anywhere:"
+          find . -type d -name "outputs" 2>/dev/null || echo "No outputs directory found"
+          find . -type d -name "best-model-responses" 2>/dev/null || echo "No best-model-responses directory found"
 
       - name: Validate Model
         run: |
@@ -155,16 +165,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
+          path: .
 
       - name: Debug - List downloaded files
         run: |
           echo "Current directory: $(pwd)"
+          echo "Listing current directory contents:"
+          ls -la | head -20
+          echo ""
           echo "Listing outputs directory:"
           ls -la outputs/ || echo "outputs/ does not exist"
+          echo ""
           echo "Listing best-model-responses if it exists:"
           ls -la outputs/best-model-responses/ || echo "outputs/best-model-responses/ does not exist"
+          echo ""
           echo "Finding all JSON files:"
-          find outputs -name "*.json" -type f | head -20 || echo "No JSON files found"
+          find . -name "*.json" -type f | head -20 || echo "No JSON files found"
+          echo ""
+          echo "Finding outputs directory anywhere:"
+          find . -type d -name "outputs" 2>/dev/null || echo "No outputs directory found"
+          find . -type d -name "best-model-responses" 2>/dev/null || echo "No best-model-responses directory found"
 
       - name: Check Bias
         run: |
@@ -208,6 +228,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
+          path: .
 
       - name: Compare with Production
         run: |
@@ -248,6 +269,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
+          path: .
         continue-on-error: true
 
       - name: Send Email Notification
