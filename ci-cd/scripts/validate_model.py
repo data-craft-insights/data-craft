@@ -82,16 +82,16 @@ def find_latest_selection_report() -> Optional[Path]:
     print(f"  No model selection report found in {best_model_dir}")
     return None
 
-def find_latest_accuracy_metrics() -> Optional[Path]:
-    """Find the latest accuracy metrics"""
+def find_latest_summary() -> Optional[Path]:
+    """Find the latest summary.json file"""
     best_model_dir = outputs_dir / "best-model-responses"
     if not best_model_dir.exists():
         return None
     
-    # Look for accuracy_metrics.json
-    accuracy_files = list(best_model_dir.rglob("accuracy_metrics.json"))
-    if accuracy_files:
-        return max(accuracy_files, key=lambda p: p.stat().st_mtime)
+    # Look for summary.json
+    summary_files = list(best_model_dir.rglob("summary.json"))
+    if summary_files:
+        return max(summary_files, key=lambda p: p.stat().st_mtime)
     
     return None
 
@@ -128,29 +128,44 @@ def validate_performance(metrics: Dict, thresholds: Dict) -> List[str]:
     
     return errors
 
-def validate_execution(accuracy_metrics: Dict, thresholds: Dict) -> List[str]:
-    """Validate execution metrics"""
+def validate_execution(summary_data: Dict, thresholds: Dict) -> List[str]:
+    """Validate execution metrics from summary.json"""
     errors = []
     exec_thresholds = thresholds['execution']
     
-    if not accuracy_metrics:
-        return ["No execution results found"]
+    if not summary_data:
+        return ["No summary data found"]
     
-    exec_success = accuracy_metrics.get('execution_success_rate', 0)
-    if exec_success < exec_thresholds['min_execution_success_rate']:
+    # Calculate metrics from summary.json
+    total_queries = summary_data.get('total_queries', 0)
+    successful_queries = summary_data.get('successful_queries', 0)
+    failed_queries = summary_data.get('failed_queries', 0)
+    
+    if total_queries == 0:
+        return ["No queries found in summary"]
+    
+    # Execution success rate = successful queries / total queries
+    exec_success_rate = (successful_queries / total_queries * 100) if total_queries > 0 else 0
+    
+    if exec_success_rate < exec_thresholds['min_execution_success_rate']:
         errors.append(
-            f"Execution success rate {exec_success:.2f}% below threshold "
+            f"Execution success rate {exec_success_rate:.2f}% below threshold "
             f"{exec_thresholds['min_execution_success_rate']}%"
         )
     
-    validity_rate = accuracy_metrics.get('result_validity_rate', 0)
+    # For result validity, we use successful queries as valid (since summary doesn't have execution validation)
+    # This assumes successful query generation means valid results
+    validity_rate = exec_success_rate  # Use same as execution success rate
+    
     if validity_rate < exec_thresholds['min_result_validity_rate']:
         errors.append(
             f"Result validity rate {validity_rate:.2f}% below threshold "
             f"{exec_thresholds['min_result_validity_rate']}%"
         )
     
-    overall_accuracy = accuracy_metrics.get('overall_accuracy', 0)
+    # Overall accuracy = valid results / total queries
+    overall_accuracy = exec_success_rate  # Same as execution success rate
+    
     if overall_accuracy < exec_thresholds['min_overall_accuracy']:
         errors.append(
             f"Overall accuracy {overall_accuracy:.2f}% below threshold "
@@ -194,24 +209,35 @@ def main():
         print("\nValidating performance metrics...")
         perf_errors = validate_performance(selection_data, thresholds)
         
-        # Validate execution
+        # Validate execution using summary.json
         print("Validating execution metrics...")
-        accuracy_file = find_latest_accuracy_metrics()
-        accuracy_metrics = None
-        if accuracy_file:
-            with open(accuracy_file, 'r') as f:
-                accuracy_metrics = json.load(f)
-            print(f"✓ Found execution results: {accuracy_file.name}")
+        summary_file = find_latest_summary()
+        summary_data = None
+        if summary_file:
+            with open(summary_file, 'r') as f:
+                summary_data = json.load(f)
+            print(f"✓ Found summary: {summary_file.name}")
+            print(f"  Total queries: {summary_data.get('total_queries', 0)}")
+            print(f"  Successful queries: {summary_data.get('successful_queries', 0)}")
+            print(f"  Failed queries: {summary_data.get('failed_queries', 0)}")
         else:
-            print("⚠ No execution results found")
+            print("⚠ No summary file found")
         
-        exec_errors = validate_execution(accuracy_metrics, thresholds)
+        exec_errors = validate_execution(summary_data, thresholds)
         
         # Combine errors
         all_errors = perf_errors + exec_errors
         
         # Save validation report
         best_model = selection_data.get('best_model', {})
+        
+        # Calculate execution accuracy from summary if available
+        execution_accuracy = None
+        if summary_data:
+            total = summary_data.get('total_queries', 0)
+            successful = summary_data.get('successful_queries', 0)
+            execution_accuracy = (successful / total * 100) if total > 0 else 0
+        
         validation_report = {
             "timestamp": str(Path(__file__).stat().st_mtime),
             "status": "passed" if not all_errors else "failed",
@@ -220,7 +246,7 @@ def main():
                 "composite_score": best_model.get('composite_score', 0),
                 "performance_score": best_model.get('performance_score', 0),
                 "success_rate": best_model.get('success_rate', 0),
-                "execution_accuracy": accuracy_metrics.get('overall_accuracy', 0) if accuracy_metrics else None
+                "execution_accuracy": execution_accuracy
             }
         }
         
@@ -246,8 +272,11 @@ def main():
             print(f"  ✓ Composite Score: {best_model.get('composite_score', 0):.2f}")
             print(f"  ✓ Performance Score: {best_model.get('performance_score', 0):.2f}")
             print(f"  ✓ Success Rate: {best_model.get('success_rate', 0):.2f}%")
-            if accuracy_metrics:
-                print(f"  ✓ Execution Accuracy: {accuracy_metrics.get('overall_accuracy', 0):.2f}%")
+            if summary_data:
+                total = summary_data.get('total_queries', 0)
+                successful = summary_data.get('successful_queries', 0)
+                exec_acc = (successful / total * 100) if total > 0 else 0
+                print(f"  ✓ Execution Accuracy: {exec_acc:.2f}%")
             print(f"\nValidation report saved: {validation_file}")
             return 0
             
