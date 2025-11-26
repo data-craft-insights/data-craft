@@ -5,6 +5,7 @@ Validates that bias is within acceptable thresholds using best model responses
 """
 
 import sys
+import os
 import json
 import yaml
 from pathlib import Path
@@ -13,7 +14,28 @@ from typing import Optional
 # Add paths
 project_root = Path(__file__).parent.parent.parent
 config_path = project_root / "ci-cd" / "config" / "validation_thresholds.yaml"
-outputs_dir = project_root / "outputs"
+
+# Try multiple locations for outputs directory (for CI/CD compatibility)
+outputs_dir = None
+possible_paths = [
+    project_root / "outputs",
+    Path.cwd() / "outputs",
+]
+
+# Check GITHUB_WORKSPACE if available
+github_workspace = os.environ.get('GITHUB_WORKSPACE')
+if github_workspace:
+    possible_paths.insert(0, Path(github_workspace) / "outputs")
+
+for path in possible_paths:
+    if path.exists():
+        outputs_dir = path
+        if path != project_root / "outputs":
+            print(f"Using outputs directory: {outputs_dir}")
+        break
+
+if outputs_dir is None:
+    outputs_dir = project_root / "outputs"  # Default fallback
 
 def load_thresholds():
     """Load bias thresholds"""
@@ -24,8 +46,18 @@ def load_thresholds():
 def find_latest_selection_report() -> Optional[Path]:
     """Find the latest model selection report in best-model-responses"""
     best_model_dir = outputs_dir / "best-model-responses"
+    
+    # Debug: Check if outputs_dir exists and list contents
+    print(f"  Checking outputs directory: {outputs_dir}")
+    print(f"  Outputs directory exists: {outputs_dir.exists()}")
+    if outputs_dir.exists():
+        print(f"  Contents of outputs directory:")
+        for item in outputs_dir.iterdir():
+            print(f"    - {item.name} ({'dir' if item.is_dir() else 'file'})")
+    
     if not best_model_dir.exists():
         print(f"  Directory does not exist: {best_model_dir}")
+        print(f"  Absolute path: {best_model_dir.resolve()}")
         return None
     
     # Debug: List all JSON files found
@@ -55,6 +87,10 @@ def main():
     print("=" * 70)
     print("BIAS DETECTION CHECK")
     print("=" * 70)
+    print(f"Project root: {project_root}")
+    print(f"Outputs directory: {outputs_dir}")
+    print(f"Outputs directory exists: {outputs_dir.exists()}")
+    print(f"Outputs directory absolute path: {outputs_dir.resolve()}")
     
     try:
         thresholds = load_thresholds()

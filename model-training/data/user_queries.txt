@@ -1,48 +1,23 @@
-# === BASIC AGGREGATION QUERIES (5) ===
+# === BASIC AGGREGATION QUERIES (2) ===
 What is the total sales?
-Calculate the sum of all profits
 Count the total number of orders
-What is the maximum single order value?
-What is the average shipping cost?
 
-# === FILTERING QUERIES (5) ===
+# === FILTERING QUERIES (2) ===
 Show me all orders from California
 List products with profit greater than $500
-Find orders with discount greater than or equal to 0.2
-Show Consumer segment customer orders
-Display orders shipped to New York state
 
-# === RANKING AND SORTING QUERIES (5) ===
+# === RANKING AND SORTING QUERIES (2) ===
 What are the top 10 products by total sales?
-Show me the bottom 5 states by profit
-List the top 20 customers by total spending
-Find the worst performing 10 products by profit
 Show 5 orders with highest total value
 
-# === TIME-BASED QUERIES (5) ===
+# === TIME-BASED QUERIES (2) ===
 Show me the sales trend from 2020 to 2023
 What was the monthly revenue in 2022?
-Calculate quarterly profit for 2021
-What were daily sales in January 2022?
-Show sales by month in 2022
 
-# === COMPARISON QUERIES (5) ===
+# === COMPARISON QUERIES (2) ===
 Compare sales between East and West regions
 Consumer vs Corporate segment profitability
-Technology vs Furniture category revenue
-Compare 2022 sales to 2023 sales
-Standard Class vs First Class shipping costs
 
-# === GROUPING AND AGGREGATION QUERIES (5) ===
+# === GROUPING AND AGGREGATION QUERIES (2) ===
 Sales by region and category
 Profit by segment and sub-category
-Order count by state and year
-Quantity sold by category and month
-Revenue by year and quarter
-
-# === COMPLEX ANALYTICAL QUERIES (5) ===
-What is the profit margin percentage by category?
-Calculate customer retention by showing repeat customers
-Show products that appear in orders across all regions
-Find customers who purchased from multiple categories
-Calculate the running total of sales by month in 2022
