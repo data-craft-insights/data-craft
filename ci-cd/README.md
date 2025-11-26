@@ -20,6 +20,9 @@ Compare with Production & Deploy
 Send Notifications
 ```
 
+<img width="1469" height="591" alt="Screenshot 2025-11-25 at 8 25 34 PM" src="https://github.com/user-attachments/assets/e40bbbbe-6897-4a10-a1fc-d53c6051315c" />
+
+
 ## Pipeline Steps
 
 ### 1. Trigger DAG
@@ -35,7 +38,8 @@ Send Notifications
 - None (uses Airflow API)
 
 **Screenshot:**
-<!-- Add screenshot of trigger_dag job here -->
+<img width="1117" height="529" alt="Screenshot 2025-11-25 at 1 07 27 PM" src="https://github.com/user-attachments/assets/79931382-c38b-4fd0-b84b-f4f746d4c849" />
+
 
 ---
 
@@ -54,7 +58,7 @@ Send Notifications
 - Downloads: `summary.json`, `model_selection_report.json` from GCS
 
 **Screenshot:**
-<!-- Add screenshot of download_outputs job here -->
+<img width="677" height="539" alt="Screenshot 2025-11-25 at 1 36 29 PM" src="https://github.com/user-attachments/assets/e70209f9-0651-4f19-964d-6b9843bfd244" />
 
 ---
 
@@ -74,7 +78,7 @@ Send Notifications
 - `ci-cd/config/validation_thresholds.yaml` (thresholds)
 
 **Screenshot:**
-<!-- Add screenshot of validate job here -->
+<img width="655" height="299" alt="Screenshot 2025-11-25 at 1 45 18 PM" src="https://github.com/user-attachments/assets/cfe35620-8df9-498a-b17f-e59d3682defc" />
 
 ---
 
@@ -92,7 +96,7 @@ Send Notifications
 - `ci-cd/config/validation_thresholds.yaml` (bias thresholds)
 
 **Screenshot:**
-<!-- Add screenshot of check_bias job here -->
+<img width="689" height="283" alt="Screenshot 2025-11-25 at 1 45 52 PM" src="https://github.com/user-attachments/assets/87603c17-c29e-4d55-ba60-d667bda31dc4" />
 
 ---
 
@@ -112,7 +116,9 @@ Send Notifications
 - `ci-cd/config/ci_cd_config.yaml` (rollback configuration)
 
 **Screenshot:**
-<!-- Add screenshot of compare_and_deploy job here -->
+<img width="677" height="271" alt="Screenshot 2025-11-25 at 1 48 43 PM" src="https://github.com/user-attachments/assets/f886ea67-fe31-4dd9-973d-a5ba751319c1" />
+
+<img width="673" height="432" alt="Screenshot 2025-11-25 at 1 46 42 PM" src="https://github.com/user-attachments/assets/75e97d12-2922-4bf0-984b-8fddeeab142b" />
 
 ---
 
@@ -131,7 +137,9 @@ Send Notifications
 - `ci-cd/config/ci_cd_config.yaml` (email configuration)
 
 **Screenshot:**
-<!-- Add screenshot of notify job here -->
+<img width="683" height="184" alt="Screenshot 2025-11-25 at 1 49 25 PM" src="https://github.com/user-attachments/assets/ab37dec6-eac7-44e7-9c4e-ba192c296d68" />
+<img width="745" height="642" alt="Screenshot 2025-11-25 at 1 50 02 PM" src="https://github.com/user-attachments/assets/191d0bcf-5936-4392-b78b-17f2c8134149" />
+
 
 ---
 
