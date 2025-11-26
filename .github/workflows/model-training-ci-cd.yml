@@ -96,7 +96,7 @@ jobs:
     name: Validate Model Performance
     needs: download_outputs
     runs-on: ubuntu-latest
-    if: needs.download_outputs.result == 'success'  # Only check download_outputs, not all jobs
+    if: needs.download_outputs.result == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -116,26 +116,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
-          path: .
+          path: outputs
 
       - name: Debug - List downloaded files
         run: |
           echo "Current directory: $(pwd)"
-          echo "Listing current directory contents:"
-          ls -la | head -20
-          echo ""
           echo "Listing outputs directory:"
           ls -la outputs/ || echo "outputs/ does not exist"
           echo ""
-          echo "Listing best-model-responses if it exists:"
+          echo "Listing best-model-responses:"
           ls -la outputs/best-model-responses/ || echo "outputs/best-model-responses/ does not exist"
           echo ""
-          echo "Finding all JSON files:"
-          find . -name "*.json" -type f | head -20 || echo "No JSON files found"
-          echo ""
-          echo "Finding outputs directory anywhere:"
-          find . -type d -name "outputs" 2>/dev/null || echo "No outputs directory found"
-          find . -type d -name "best-model-responses" 2>/dev/null || echo "No best-model-responses directory found"
+          echo "Finding model selection report:"
+          find outputs -name "model_selection_report.json" -type f || echo "No model selection report found"
 
       - name: Validate Model
         run: |
@@ -145,7 +138,7 @@ jobs:
     name: Check Model Bias
     needs: download_outputs
     runs-on: ubuntu-latest
-    if: needs.download_outputs.result == 'success'  # Only check download_outputs, not all jobs
+    if: needs.download_outputs.result == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -165,26 +158,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
-          path: .
+          path: outputs
 
       - name: Debug - List downloaded files
         run: |
           echo "Current directory: $(pwd)"
-          echo "Listing current directory contents:"
-          ls -la | head -20
-          echo ""
           echo "Listing outputs directory:"
           ls -la outputs/ || echo "outputs/ does not exist"
           echo ""
-          echo "Listing best-model-responses if it exists:"
+          echo "Listing best-model-responses:"
           ls -la outputs/best-model-responses/ || echo "outputs/best-model-responses/ does not exist"
-          echo ""
-          echo "Finding all JSON files:"
-          find . -name "*.json" -type f | head -20 || echo "No JSON files found"
-          echo ""
-          echo "Finding outputs directory anywhere:"
-          find . -type d -name "outputs" 2>/dev/null || echo "No outputs directory found"
-          find . -type d -name "best-model-responses" 2>/dev/null || echo "No best-model-responses directory found"
 
       - name: Check Bias
         run: |
@@ -228,14 +211,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
-          path: .
+          path: outputs
 
       - name: Compare with Production
         run: |
           python ci-cd/scripts/rollback_manager.py || exit 1
 
       - name: Push to Production Registry
-        # Only deploy to production if not in local mode
         if: github.event_name == 'push' || github.event.inputs.mode == 'prod'
         run: |
           python ci-cd/scripts/push_to_registry.py --commit-sha ${{ steps.commit.outputs.sha }}
@@ -269,7 +251,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: model-outputs
-          path: .
+          path: outputs
         continue-on-error: true
 
       - name: Send Email Notification
