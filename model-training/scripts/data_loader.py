@@ -640,10 +640,10 @@ if __name__ == "__main__":
     )
     
     # Configuration
-    PROJECT_ID = "datacraft-data-pipeline"
-    BUCKET_NAME = "isha-retail-data"
-    DATASET_ID = "datacraft_ml"
-    DATASET_NAME = "orders"
+    PROJECT_ID = "datacraft-478300"
+    BUCKET_NAME = "model-datacraft"
+    DATASET_ID = "datacraft-478300.datacraft_ml"
+    DATASET_NAME = "datacraft_ml"
     
     try:
         # Initialize loader
