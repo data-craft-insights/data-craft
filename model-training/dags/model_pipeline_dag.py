@@ -53,9 +53,9 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, GenerationConfig
 
 # Configuration
-PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "datacraft-data-pipeline")
-REGION = Variable.get("REGION", default_var="us-central1")
-BUCKET_NAME = Variable.get("BUCKET_NAME", default_var="isha-retail-data")
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "datacraft-478300")
+REGION = Variable.get("REGION", default_var="us-east1")
+BUCKET_NAME = Variable.get("BUCKET_NAME", default_var="model-datacraft")
 DATASET_ID = Variable.get("BQ_DATASET", default_var="datacraft_ml")
 
 # ✅ Multiple models for evaluation
@@ -776,12 +776,46 @@ def execute_and_validate_best_model_queries(**context):
         "result_validity_rate": (valid / executed * 100) if executed > 0 else 0,
         "overall_accuracy": (valid / total * 100) if total > 0 else 0
     }
-    
+        # ----------------------------------------
+    # Make XCom payload JSON-safe ( added when it failed at execute_validate_queries stage when testing with 140 queries)
+    #This keeps the structure of execution_results exactly the same,
+    # but converts any Timestamp (and other weird types) into strings / basic Python types, so Airflow’s JSON encoder is happy.
+    # ----------------------------------------
+    from datetime import datetime
+    import numpy as np
+    import pandas as pd
+
+    def make_json_safe(obj):
+        """Recursively convert objects to JSON-serializable types."""
+        # pandas / numpy timestamps
+        if isinstance(obj, (pd.Timestamp, datetime)):
+            return obj.isoformat()
+        # numpy scalars
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.bool_)):
+            return bool(obj)
+        # numpy arrays
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        # dicts & lists – recurse
+        if isinstance(obj, dict):
+            return {k: make_json_safe(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [make_json_safe(v) for v in obj]
+        # leave everything else as-is
+        return obj
+
+    safe_execution_results = make_json_safe(execution_results)
+    safe_accuracy_metrics = make_json_safe(accuracy_metrics)
+
     # Store in XCom
-    ti.xcom_push(key='execution_results', value=execution_results)
-    ti.xcom_push(key='accuracy_metrics', value=accuracy_metrics)
+    ti.xcom_push(key='execution_results', value=safe_execution_results)
+    ti.xcom_push(key='accuracy_metrics', value=safe_accuracy_metrics)
     ti.xcom_push(key='execution_results_file', value=results_file)
-    
+
     print(f"\n{'='*60}")
     print(f"Execution & Validation Summary:")
     print(f"  Total Queries: {total}")
