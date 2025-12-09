@@ -1,0 +1,17 @@
+# Model Validation Thresholds
+# Used by CI/CD pipeline to validate model performance
+
+validation_thresholds:
+  performance:
+    min_overall_score: 40.0  # Composite score (performance + bias + speed)
+    min_success_rate: 50.0    # Percentage of successful query generations
+  
+  bias:
+    max_bias_score: 50.0      # Maximum acceptable bias score (lower is better)
+    max_severity: "MEDIUM"     # Options: LOW, MEDIUM, HIGH
+  
+  execution:
+    min_execution_success_rate: 50.0  # Percentage of queries that execute successfully
+    min_result_validity_rate: 50.0    # Percentage of results that are valid
+    min_overall_accuracy: 50.0         # Overall accuracy (valid results / total queries)
+

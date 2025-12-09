@@ -1,0 +1,264 @@
+name: Model Training CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      # - sanskar-ci-cd
+    paths:
+      - 'model-training/data/user_queries.txt'
+      - 'model-training/scripts/**'
+      - 'ci-cd/**'
+      - '.github/workflows/model-training-ci-cd.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - local
+          - prod
+
+env:
+  PYTHON_VERSION: '3.9'
+  GCP_PROJECT_ID: 'datacraft-478300'
+
+jobs:
+  trigger_dag:
+    name: Trigger Airflow DAG
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'prod')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests pyyaml
+
+      - name: Trigger DAG and Wait
+        env:
+          AIRFLOW_URL: ${{ secrets.AIRFLOW_URL }}
+          AIRFLOW_DAG_ID: 'model_pipeline_with_evaluation'
+          AIRFLOW_USERNAME: ${{ secrets.AIRFLOW_USERNAME }}
+          AIRFLOW_PASSWORD: ${{ secrets.AIRFLOW_PASSWORD }}
+        run: |
+          python ci-cd/scripts/trigger_dag.py || exit 1
+
+  download_outputs:
+    name: Download Model Outputs
+    needs: trigger_dag
+    runs-on: ubuntu-latest
+    if: always() && (needs.trigger_dag.result == 'success' || needs.trigger_dag.result == 'skipped')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Download Outputs from GCS
+        run: |
+          python ci-cd/scripts/download_outputs.py || exit 1
+
+      - name: Upload outputs as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: model-outputs
+          path: outputs
+          retention-days: 7
+
+  validate:
+    name: Validate Model Performance
+    needs: download_outputs
+    runs-on: ubuntu-latest
+    if: needs.download_outputs.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: model-outputs
+          path: outputs
+
+      - name: Debug - List downloaded files
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Listing outputs directory:"
+          ls -la outputs/ || echo "outputs/ does not exist"
+          echo ""
+          echo "Listing best-model-responses:"
+          ls -la outputs/best-model-responses/ || echo "outputs/best-model-responses/ does not exist"
+          echo ""
+          echo "Finding model selection report:"
+          find outputs -name "model_selection_report.json" -type f || echo "No model selection report found"
+
+      - name: Validate Model
+        run: |
+          python ci-cd/scripts/validate_model.py || exit 1
+
+  check_bias:
+    name: Check Model Bias
+    needs: download_outputs
+    runs-on: ubuntu-latest
+    if: needs.download_outputs.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: model-outputs
+          path: outputs
+
+      - name: Debug - List downloaded files
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Listing outputs directory:"
+          ls -la outputs/ || echo "outputs/ does not exist"
+          echo ""
+          echo "Listing best-model-responses:"
+          ls -la outputs/best-model-responses/ || echo "outputs/best-model-responses/ does not exist"
+
+      - name: Check Bias
+        run: |
+          python ci-cd/scripts/check_bias.py || exit 1
+
+  compare_and_deploy:
+    name: Compare with Production & Deploy
+    needs: [validate, check_bias]
+    runs-on: ubuntu-latest
+    if: needs.validate.result == 'success' && needs.check_bias.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Get commit SHA
+        id: commit
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Download outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: model-outputs
+          path: outputs
+
+      - name: Compare with Production
+        run: |
+          python ci-cd/scripts/rollback_manager.py || exit 1
+
+      - name: Push to Production Registry
+        if: github.event_name == 'push' || github.event.inputs.mode == 'prod'
+        run: |
+          python ci-cd/scripts/push_to_registry.py --commit-sha ${{ steps.commit.outputs.sha }}
+
+      - name: Log skip deployment
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'local'
+        run: |
+          echo "Skipping production deployment - running in local mode"
+
+  notify:
+    name: Send Notifications
+    needs: [trigger_dag, download_outputs, validate, check_bias, compare_and_deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: model-outputs
+          path: outputs
+        continue-on-error: true
+
+      - name: Send Email Notification
+        env:
+          EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
+          EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+        run: |
+          python ci-cd/scripts/send_notification.py \
+            --status ${{ job.status }} \
+            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
