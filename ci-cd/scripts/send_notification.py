@@ -74,7 +74,7 @@ def get_pipeline_summary() -> Dict:
     
     return summary
 
-def create_email_body(status: str, summary: Dict, workflow_url: Optional[str] = None) -> str:
+def create_email_body(status: str, summary: Dict, workflow_url: Optional[str] = None, deployment_url: Optional[str] = None) -> str:
     """Create email body content"""
     status_emoji = "✅" if status == "success" else "❌"
     status_text = "SUCCESS" if status == "success" else "FAILED"
@@ -108,6 +108,9 @@ Metrics:
     if summary.get('registry_path'):
         body += f"\nModel Registry: {summary.get('registry_path', '')}\n"
     
+    if deployment_url and deployment_url != 'N/A':
+        body += f"\n🚀 Deployed Application: {deployment_url}\n"
+    
     if workflow_url:
         body += f"\nWorkflow Run: {workflow_url}\n"
     
@@ -119,7 +122,7 @@ This is an automated notification from the Model Training CI/CD Pipeline.
     
     return body
 
-def send_email(config: Dict, status: str, workflow_url: Optional[str] = None):
+def send_email(config: Dict, status: str, workflow_url: Optional[str] = None, deployment_url: Optional[str] = None):
     """Send email notification
     
     Email Configuration:
@@ -150,7 +153,7 @@ def send_email(config: Dict, status: str, workflow_url: Optional[str] = None):
     smtp_user = str(smtp_user)
     
     summary = get_pipeline_summary()
-    body = create_email_body(status, summary, workflow_url)
+    body = create_email_body(status, summary, workflow_url, deployment_url)
     
     # Create message
     msg = MIMEMultipart()
@@ -183,6 +186,7 @@ def main():
     parser.add_argument('--status', required=True, choices=['success', 'failure', 'cancelled'],
                        help='Pipeline status')
     parser.add_argument('--workflow-run-url', help='GitHub workflow run URL')
+    parser.add_argument('--deployment-url', help='Deployed application URL')
     args = parser.parse_args()
     
     print("=" * 70)
@@ -193,7 +197,7 @@ def main():
         config = load_config()
         print("✓ Loaded configuration")
         
-        send_email(config, args.status, args.workflow_run_url)
+        send_email(config, args.status, args.workflow_run_url, args.deployment_url)
         
         print("\n" + "=" * 70)
         print("NOTIFICATION SENT")

@@ -21,6 +21,7 @@ from visualization_engine import VisualizationEngine
 from dataset_manager import DatasetManager
 from dataset_describer import DatasetDescriber
 from unstructured_data_handler import UnstructuredDataHandler
+from metadata_loader import MetadataLoader
 
 # Page configuration
 st.set_page_config(
@@ -182,9 +183,23 @@ if 'handler' not in st.session_state:
         'dataset_id': os.getenv('BQ_DATASET', 'datacraft_ml'),
         'bucket_name': os.getenv('GCS_BUCKET_NAME', 'isha-retail-data'),
         'region': os.getenv('GCP_REGION', 'us-central1'),
-        'model_name': os.getenv('BEST_MODEL_NAME', 'gemini-2.5-pro'),
         'table_name': 'orders_processed'
     }
+    
+    # Load best model from GCS metadata
+    try:
+        metadata_loader = MetadataLoader(config['project_id'], config['bucket_name'])
+        best_model = metadata_loader.get_best_model_name()
+        config['model_name'] = best_model
+        st.session_state.best_model_metadata = metadata_loader.get_model_info()
+        st.session_state.metadata_loader = metadata_loader
+    except Exception as e:
+        # Fallback to default or environment variable
+        config['model_name'] = os.getenv('BEST_MODEL_NAME', 'gemini-2.5-flash')
+        st.warning(f"⚠️ Could not load metadata from GCS: {e}. Using default model: {config['model_name']}")
+        st.session_state.best_model_metadata = None
+        st.session_state.metadata_loader = None
+    
     st.session_state.config = config
     st.session_state.handler = QueryHandler(config)
     st.session_state.viz_engine = VisualizationEngine()

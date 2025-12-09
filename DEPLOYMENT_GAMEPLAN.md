@@ -11,7 +11,35 @@ This is fundamentally different from traditional ML deployment because:
 - ✅ No model weights to store
 - ✅ No training artifacts needed
 - ✅ Just code + configuration
-- ✅ Deploy as Docker container → Vertex AI Endpoint
+- ✅ Deploy as Docker container → Cloud Run
+
+### Single Sequential CI/CD Pipeline
+
+Your deployment uses **ONE continuous pipeline** that runs sequentially:
+
+```
+Push to main
+    ↓
+1. Trigger Airflow DAG (Training/Eval)
+    ↓
+2. Wait for Airflow to finish
+    ↓
+3. Download Best Model Metadata
+    ↓
+4. Validate Performance + Bias Check
+    ↓
+5. Compare with Production
+    ↓
+6. Build Docker Image (Frontend + Backend)
+    ↓
+7. Push to Artifact Registry
+    ↓
+8. Deploy to Cloud Run
+    ↓
+9. Notify
+```
+
+**Frontend Integration**: Your Streamlit frontend (`frontend/app.py`) is deployed as part of the same Docker image, making it a **monolithic application** that includes both UI and backend logic.
 
 ---
 
@@ -79,60 +107,71 @@ This is fundamentally different from traditional ML deployment because:
                     gs://bucket/models/{timestamp}_{commit}/
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
-│              DEPLOYMENT FLOW (TO BUILD)                      │
+│         SINGLE CI/CD PIPELINE (SEQUENTIAL)                  │
 │                                                              │
-│  1. Build Docker Image (inference code)                     │
-│  2. Push to Artifact Registry                                │
-│  3. Deploy to Vertex AI Endpoint                            │
-│  4. Container loads metadata from GCS on startup             │
-│  5. Exposes REST API for inference                           │
+│  1. Trigger Airflow DAG (Training/Eval)                    │
+│  2. Download Best Model Metadata                            │
+│  3. Validate Performance + Bias                             │
+│  4. Compare with Production                                 │
+│  5. Build Docker Image (Frontend + Backend)                 │
+│  6. Push to Artifact Registry                                │
+│  7. Deploy to Cloud Run / Vertex AI                         │
+│  8. Notify                                                  │
 └─────────────────────────────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
 │              PRODUCTION SERVING                              │
 │                                                              │
-│  User Query → Vertex Endpoint → Load Metadata               │
-│         → Call Gemini API with config → Return SQL + Viz    │
+│  User → Streamlit UI → Query Handler                        │
+│         → Load Metadata from GCS                            │
+│         → Call Gemini API with config                       │
+│         → Execute SQL → Return Results + Viz                │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Key Insight: Frontend Integration
+
+Your **frontend** (`frontend/app.py`) is a Streamlit application that:
+- ✅ Directly imports from `model-training/scripts/` (monolithic architecture)
+- ✅ Uses `QueryHandler` which calls Gemini API
+- ✅ Needs model metadata to know which model/hyperparameters to use
+- ✅ Should be deployed as a **single container** with frontend + backend together
+
+**Deployment Strategy**: 
+- Build **one Docker image** containing:
+  - Streamlit frontend (`frontend/app.py`)
+  - Model training scripts (for QueryHandler)
+  - Metadata loader (to fetch best model config from GCS)
+- Deploy to **Cloud Run** (better for Streamlit) or **Vertex AI**
 
 ---
 
 ## 📋 STEP-BY-STEP GAMEPLAN
 
-### **PHASE 1: Create Inference Codebase** (2-3 hours)
+### **PHASE 1: Create Metadata Loader** (1 hour)
 
-#### Step 1.1: Create Inference Service Structure
+**Note**: Since your frontend already uses `QueryHandler` from `model-training/scripts/`, we only need to add a metadata loader that the frontend can use to get the best model configuration.
 
-Create directory: `model-serving/`
+#### Step 1.1: Create Metadata Loader Module
 
-```
-model-serving/
-├── app/
-│   ├── __init__.py
-│   ├── serve.py              # FastAPI/Flask server
-│   ├── predict.py            # Main inference logic
-│   ├── model_selector.py     # Load metadata from GCS
-│   ├── metadata_loader.py    # Fetch & parse metadata
-│   └── llm_client.py         # Gemini API client
-├── Dockerfile
-├── requirements.txt
-├── .dockerignore
-└── README.md
-```
+Create: `frontend/metadata_loader.py`
+
+**Purpose**: Load best model metadata from GCS so frontend knows which model/hyperparameters to use
 
 #### Step 1.2: Implement `metadata_loader.py`
 
-**Purpose**: Load best model metadata from GCS
-
 ```python
-# model-serving/app/metadata_loader.py
+# frontend/metadata_loader.py
 from google.cloud import storage
 import json
 from typing import Dict, Optional
-from pathlib import Path
+import os
 
 class MetadataLoader:
+    """
+    Load best model metadata from GCS
+    Used by frontend to get current production model configuration
+    """
     def __init__(self, project_id: str, bucket_name: str):
         self.project_id = project_id
         self.bucket_name = bucket_name
@@ -168,11 +207,22 @@ class MetadataLoader:
                     model_dirs[timestamp] = blob.name
         
         if not model_dirs:
+            # Fallback: try best_model_responses path
+            blobs = list(self.bucket.list_blobs(prefix="best_model_responses/"))
+            for blob in blobs:
+                if "best_model_metadata.json" in blob.name:
+                    model_dirs["fallback"] = blob.name
+                    break
+        
+        if not model_dirs:
             raise ValueError("No metadata found in GCS")
         
         # Get latest
-        latest_timestamp = max(model_dirs.keys())
-        latest_blob_path = model_dirs[latest_timestamp]
+        if "fallback" in model_dirs:
+            latest_blob_path = model_dirs["fallback"]
+        else:
+            latest_timestamp = max(model_dirs.keys())
+            latest_blob_path = model_dirs[latest_timestamp]
         
         # Download and parse
         blob = self.bucket.blob(latest_blob_path)
@@ -181,7 +231,12 @@ class MetadataLoader:
         
         return metadata
     
-    def load_hyperparameters(self, metadata: Dict) -> Dict:
+    def get_best_model_name(self) -> str:
+        """Get best model name from latest metadata"""
+        metadata = self.load_latest_metadata()
+        return metadata.get("selected_model", "gemini-2.5-flash")
+    
+    def get_hyperparameters(self) -> Dict:
         """
         Extract hyperparameters from metadata or use defaults
         
@@ -192,6 +247,8 @@ class MetadataLoader:
                 "top_k": 40
             }
         """
+        metadata = self.load_latest_metadata()
+        
         # Check if hyperparameters are in metadata
         if "hyperparameters" in metadata:
             return metadata["hyperparameters"]
@@ -204,297 +261,118 @@ class MetadataLoader:
         }
 ```
 
-#### Step 1.3: Implement `llm_client.py`
+#### Step 1.3: Update Frontend to Use Metadata Loader
 
-**Purpose**: Client for calling Gemini API
-
-```python
-# model-serving/app/llm_client.py
-import vertexai
-from vertexai.generative_models import GenerativeModel, GenerationConfig
-from typing import Dict, Optional
-
-class LLMClient:
-    def __init__(self, project_id: str, location: str = "us-central1"):
-        vertexai.init(project=project_id, location=location)
-        self.project_id = project_id
-        self.location = location
-        self.model = None
-        self.model_name = None
-    
-    def initialize_model(self, model_name: str):
-        """Initialize Gemini model"""
-        self.model_name = model_name
-        self.model = GenerativeModel(model_name)
-    
-    def generate_sql(
-        self,
-        user_query: str,
-        dataset_metadata: str,
-        hyperparameters: Dict,
-        prompt_template: Optional[str] = None
-    ) -> Dict:
-        """
-        Generate SQL query from user query
-        
-        Args:
-            user_query: Natural language query
-            dataset_metadata: Schema and context from BigQuery
-            hyperparameters: {temperature, top_p, top_k}
-            prompt_template: Optional custom prompt
-        
-        Returns:
-            {
-                "sql_query": "SELECT ...",
-                "visualization_config": {...},
-                "explanation": "..."
-            }
-        """
-        # Build prompt (reuse from model-training/scripts/prompts.py)
-        prompt = self._build_prompt(user_query, dataset_metadata, prompt_template)
-        
-        # Create generation config
-        generation_config = GenerationConfig(
-            temperature=hyperparameters.get("temperature", 0.2),
-            top_p=hyperparameters.get("top_p", 0.9),
-            top_k=hyperparameters.get("top_k", 40),
-            max_output_tokens=2048,
-            response_mime_type="application/json"
-        )
-        
-        # Generate
-        response = self.model.generate_content(
-            prompt,
-            generation_config=generation_config
-        )
-        
-        # Parse JSON response
-        import json
-        result = json.loads(response.text)
-        
-        return result
-    
-    def _build_prompt(self, user_query: str, dataset_metadata: str, template: Optional[str]) -> str:
-        """Build prompt with few-shot examples"""
-        # Reuse prompt building logic from model-training/scripts/prompts.py
-        # Or load from GCS if stored there
-        pass
-```
-
-#### Step 1.4: Implement `predict.py`
-
-**Purpose**: Main inference function
+Update `frontend/app.py` to load best model from GCS:
 
 ```python
-# model-serving/app/predict.py
-from typing import Dict
-from .metadata_loader import MetadataLoader
-from .llm_client import LLMClient
+# Add at top of app.py
+from metadata_loader import MetadataLoader
 
-class InferenceService:
-    def __init__(self, project_id: str, bucket_name: str, location: str = "us-central1"):
-        self.project_id = project_id
-        self.bucket_name = bucket_name
-        self.location = location
-        
-        # Load metadata on initialization
-        self.metadata_loader = MetadataLoader(project_id, bucket_name)
-        self.metadata = self.metadata_loader.load_latest_metadata()
-        self.hyperparameters = self.metadata_loader.load_hyperparameters(self.metadata)
-        
-        # Initialize LLM client
-        self.llm_client = LLMClient(project_id, location)
-        selected_model = self.metadata.get("selected_model", "gemini-2.5-flash")
-        self.llm_client.initialize_model(selected_model)
-        
-        print(f"✓ Initialized inference service")
-        print(f"  Model: {selected_model}")
-        print(f"  Score: {self.metadata.get('composite_score', 0):.2f}")
-        print(f"  Hyperparameters: {self.hyperparameters}")
-    
-    def predict(self, user_query: str, dataset_name: str, dataset_metadata: str) -> Dict:
-        """
-        Main prediction function
-        
-        Args:
-            user_query: Natural language query
-            dataset_name: Name of dataset (e.g., "orders")
-            dataset_metadata: Schema and context from BigQuery
-        
-        Returns:
-            {
-                "sql_query": "...",
-                "visualization_config": {...},
-                "explanation": "...",
-                "model_used": "gemini-2.5-flash",
-                "confidence": 0.95
-            }
-        """
-        result = self.llm_client.generate_sql(
-            user_query=user_query,
-            dataset_metadata=dataset_metadata,
-            hyperparameters=self.hyperparameters
-        )
-        
-        # Add metadata
-        result["model_used"] = self.metadata.get("selected_model")
-        result["model_version"] = self.metadata.get("selection_date")
-        
-        return result
-    
-    def reload_metadata(self):
-        """Reload metadata from GCS (for hot-swapping models)"""
-        self.metadata = self.metadata_loader.load_latest_metadata()
-        self.hyperparameters = self.metadata_loader.load_hyperparameters(self.metadata)
-        
-        # Reinitialize model if changed
-        selected_model = self.metadata.get("selected_model", "gemini-2.5-flash")
-        if selected_model != self.llm_client.model_name:
-            self.llm_client.initialize_model(selected_model)
-```
-
-#### Step 1.5: Implement `serve.py` (FastAPI Server)
-
-**Purpose**: REST API endpoint
-
-```python
-# model-serving/app/serve.py
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
-import os
-from .predict import InferenceService
-
-app = FastAPI(title="DataCraft LLM Inference Service")
-
-# Initialize service on startup
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "datacraft-479223")
-BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "model-datacraft-sanskar")
-LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
-
-inference_service = None
-
-@app.on_event("startup")
-async def startup():
-    global inference_service
-    inference_service = InferenceService(PROJECT_ID, BUCKET_NAME, LOCATION)
-
-# Request/Response models
-class QueryRequest(BaseModel):
-    user_query: str
-    dataset_name: str
-    dataset_metadata: str  # JSON string from BigQuery
-
-class QueryResponse(BaseModel):
-    sql_query: str
-    visualization_config: dict
-    explanation: str
-    model_used: str
-    model_version: str
-
-@app.get("/health")
-async def health():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "model": inference_service.metadata.get("selected_model") if inference_service else "not_loaded"
+# In session state initialization (around line 178):
+if 'handler' not in st.session_state:
+    # Load configuration
+    config = {
+        'project_id': os.getenv('GCP_PROJECT_ID', 'datacraft-data-pipeline'),
+        'dataset_id': os.getenv('BQ_DATASET', 'datacraft_ml'),
+        'bucket_name': os.getenv('GCS_BUCKET_NAME', 'isha-retail-data'),
+        'region': os.getenv('GCP_REGION', 'us-central1'),
     }
-
-@app.post("/predict", response_model=QueryResponse)
-async def predict(request: QueryRequest):
-    """
-    Generate SQL query and visualization config from natural language
     
-    Example:
-        POST /predict
-        {
-            "user_query": "What are total sales by region?",
-            "dataset_name": "orders",
-            "dataset_metadata": "{...schema info...}"
-        }
-    """
-    if not inference_service:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    
+    # Load best model from GCS
     try:
-        result = inference_service.predict(
-            user_query=request.user_query,
-            dataset_name=request.dataset_name,
-            dataset_metadata=request.dataset_metadata
-        )
-        return QueryResponse(**result)
+        metadata_loader = MetadataLoader(config['project_id'], config['bucket_name'])
+        best_model = metadata_loader.get_best_model_name()
+        config['model_name'] = best_model
+        st.session_state.best_model_metadata = metadata_loader.load_latest_metadata()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/reload")
-async def reload_metadata():
-    """Reload model metadata from GCS (for model updates)"""
-    if not inference_service:
-        raise HTTPException(status_code=503, detail="Service not initialized")
+        # Fallback to default
+        config['model_name'] = os.getenv('BEST_MODEL_NAME', 'gemini-2.5-flash')
+        st.warning(f"Could not load metadata from GCS: {e}. Using default model.")
     
-    try:
-        inference_service.reload_metadata()
-        return {"status": "success", "message": "Metadata reloaded"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    config['table_name'] = 'orders_processed'
+    st.session_state.config = config
+    st.session_state.handler = QueryHandler(config)
+    # ... rest of initialization
 ```
+
+**Note**: Your `QueryHandler` in `frontend/query_handler.py` already handles LLM calls. We just need to ensure it uses the best model from metadata.
 
 ---
 
-### **PHASE 2: Containerize with Docker** (1 hour)
+### **PHASE 2: Containerize Frontend + Backend** (1 hour)
 
-#### Step 2.1: Create `Dockerfile`
+#### Step 2.1: Update Frontend Dockerfile
+
+Update `frontend/Dockerfile` to include model-training scripts:
 
 ```dockerfile
-# model-serving/Dockerfile
-FROM python:3.10-slim
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# frontend/Dockerfile
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# Copy requirements first (for layer caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install system dependencies (for PDF processing, etc.)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    poppler-utils \
+    tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy application code
-COPY app/ ./app/
+# Copy and install frontend requirements
+COPY frontend/requirements.txt ./frontend/
+RUN pip install --no-cache-dir -r frontend/requirements.txt
 
-# Expose port
-EXPOSE 8080
+# Copy model-training scripts (needed by QueryHandler)
+COPY model-training/scripts/ ./model-training/scripts/
+COPY shared/ ./shared/  # If you have shared utilities
+
+# Copy frontend application
+COPY frontend/ ./frontend/
+
+# Set Python path to include model-training scripts
+ENV PYTHONPATH="/app:/app/model-training/scripts:/app/shared:${PYTHONPATH}"
+
+# Expose Streamlit port
+EXPOSE 8501
 
 # Set environment variables
-ENV PORT=8080
+ENV STREAMLIT_SERVER_PORT=8501
+ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 ENV PYTHONUNBUFFERED=1
 
-# Run server
-CMD ["python", "-m", "app.serve"]
+# Run Streamlit
+CMD ["streamlit", "run", "frontend/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
 ```
 
-#### Step 2.2: Create `requirements.txt`
+#### Step 2.2: Update Frontend Requirements
+
+Ensure `frontend/requirements.txt` includes all dependencies:
 
 ```txt
-# model-serving/requirements.txt
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-google-cloud-storage==2.10.0
-google-cloud-aiplatform==1.38.0
-vertexai==0.1.0
-pydantic==2.5.0
+# frontend/requirements.txt
+streamlit==1.29.0
+plotly==5.18.0
+pandas==2.0.3
+google-cloud-storage==2.12.0
+google-cloud-bigquery==3.14.0
+google-cloud-aiplatform>=1.70.0
+vertexai>=1.0.0
 python-dotenv==1.0.0
+pyyaml==6.0.1
+chardet==5.2.0
+duckdb==0.9.2
+db-dtypes==1.4.4
+pdf2image
+langchain-core  # If used by QueryHandler
 ```
 
-#### Step 2.3: Create `.dockerignore`
+#### Step 2.3: Create `.dockerignore` in Root
+
+Create `.dockerignore` at project root:
 
 ```
-# model-serving/.dockerignore
+# .dockerignore
 __pycache__
 *.pyc
 *.pyo
@@ -506,182 +384,120 @@ venv/
 *.log
 .git
 .gitignore
-README.md
+*.md
 .env
+outputs/
+logs/
+*.csv
+*.json
+!frontend/.streamlit/config.toml
+gcp/service-account.json  # Don't copy credentials
 ```
 
 ---
 
-### **PHASE 3: Build & Push to Artifact Registry** (30 minutes)
+### **PHASE 3: Update CI/CD Pipeline** (1 hour)
 
-#### Step 3.1: Set up Artifact Registry
+#### Step 3.1: Add Deployment Jobs to Existing Pipeline
 
-```bash
-# Create Artifact Registry repository
-gcloud artifacts repositories create mlops-models \
-    --repository-format=docker \
-    --location=us-east1 \
-    --description="MLOps model serving containers"
-
-# Configure Docker authentication
-gcloud auth configure-docker us-east1-docker.pkg.dev
-```
-
-#### Step 3.2: Build and Push Image
-
-```bash
-cd model-serving
-
-# Build image
-docker build -t us-east1-docker.pkg.dev/datacraft-479223/mlops-models/inference-service:latest .
-
-# Push to Artifact Registry
-docker push us-east1-docker.pkg.dev/datacraft-479223/mlops-models/inference-service:latest
-```
-
----
-
-### **PHASE 4: Deploy to Vertex AI Endpoint** (1-2 hours)
-
-#### Step 4.1: Create Deployment Script
-
-Create: `ci-cd/scripts/deploy_to_vertex.py`
-
-```python
-#!/usr/bin/env python3
-"""
-Deploy inference service to Vertex AI Endpoint
-"""
-import sys
-import yaml
-import json
-from pathlib import Path
-from google.cloud import aiplatform
-from google.cloud.aiplatform import models, endpoints
-
-project_root = Path(__file__).parent.parent.parent
-config_path = project_root / "ci-cd" / "config" / "ci_cd_config.yaml"
-
-def load_config():
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-def deploy_to_vertex_endpoint(
-    project_id: str,
-    location: str,
-    image_uri: str,
-    endpoint_name: str = "datacraft-llm-endpoint"
-):
-    """
-    Deploy container to Vertex AI Endpoint
-    
-    Args:
-        project_id: GCP project ID
-        location: GCP region
-        image_uri: Full image URI from Artifact Registry
-        endpoint_name: Name for the endpoint
-    """
-    aiplatform.init(project=project_id, location=location)
-    
-    # Check if endpoint exists
-    try:
-        endpoint = endpoints.Endpoint.list(filter=f'display_name="{endpoint_name}"')[0]
-        print(f"✓ Found existing endpoint: {endpoint.resource_name}")
-    except IndexError:
-        # Create new endpoint
-        print(f"Creating new endpoint: {endpoint_name}")
-        endpoint = endpoints.Endpoint.create(display_name=endpoint_name)
-        print(f"✓ Created endpoint: {endpoint.resource_name}")
-    
-    # Deploy model (container)
-    print(f"Deploying container: {image_uri}")
-    
-    # Create model from container
-    model = models.Model.upload(
-        display_name=f"{endpoint_name}-model",
-        artifact_uri=None,  # No artifact, just container
-        serving_container_image_uri=image_uri,
-        serving_container_ports=[8080],
-        serving_container_environment_variables={
-            "GOOGLE_CLOUD_PROJECT": project_id,
-            "GCS_BUCKET_NAME": config['gcp']['bucket_name'],
-            "VERTEX_LOCATION": location
-        }
-    )
-    
-    # Deploy to endpoint
-    endpoint.deploy(
-        model=model,
-        deployed_model_display_name=f"{endpoint_name}-deployment",
-        machine_type="n1-standard-2",
-        min_replica_count=1,
-        max_replica_count=3
-    )
-    
-    print(f"✓ Deployment complete!")
-    print(f"  Endpoint: {endpoint.resource_name}")
-    print(f"  Predict URL: {endpoint.predict}")
-    
-    return endpoint
-
-def main():
-    config = load_config()
-    gcp_config = config['gcp']
-    
-    # Image URI from Artifact Registry
-    image_uri = f"us-east1-docker.pkg.dev/{gcp_config['project_id']}/mlops-models/inference-service:latest"
-    
-    endpoint = deploy_to_vertex_endpoint(
-        project_id=gcp_config['project_id'],
-        location=gcp_config['region'],
-        image_uri=image_uri
-    )
-    
-    return 0
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-#### Step 4.2: Add Deployment Job to CI/CD Pipeline
-
-Update: `.github/workflows/model-training-ci-cd.yml`
-
-Add new job after `compare_and_deploy`:
+Update `.github/workflows/model-training-ci-cd.yml` to add deployment steps **after** `compare_and_deploy`:
 
 ```yaml
-  deploy_to_endpoint:
-    name: Deploy to Vertex AI Endpoint
+  build_and_deploy:
+    name: Build Docker Image & Deploy
     needs: [compare_and_deploy]
     runs-on: ubuntu-latest
     if: needs.compare_and_deploy.result == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-      
+
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
-      
-      - name: Build Docker Image
-        run: |
-          cd model-serving
-          docker build -t us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/inference-service:${{ github.sha }} .
-      
-      - name: Push to Artifact Registry
+
+      - name: Configure Docker for Artifact Registry
         run: |
           gcloud auth configure-docker us-east1-docker.pkg.dev
-          docker push us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/inference-service:${{ github.sha }}
-      
-      - name: Deploy to Vertex AI
+
+      - name: Get commit SHA
+        id: commit
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Build Docker Image
         run: |
-          pip install google-cloud-aiplatform
-          python ci-cd/scripts/deploy_to_vertex.py
+          docker build -f frontend/Dockerfile \
+            -t us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:${{ steps.commit.outputs.sha }} \
+            -t us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:latest \
+            .
+
+      - name: Push to Artifact Registry
+        run: |
+          docker push us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:${{ steps.commit.outputs.sha }}
+          docker push us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy datacraft-app \
+            --image us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:${{ steps.commit.outputs.sha }} \
+            --platform managed \
+            --region us-east1 \
+            --allow-unauthenticated \
+            --port 8501 \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 300 \
+            --set-env-vars GCP_PROJECT_ID=${{ env.GCP_PROJECT_ID }},BQ_DATASET=datacraft_ml,GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }},GCP_REGION=us-east1 \
+            --service-account mlops-ci-cd@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
 ```
+
+#### Step 3.2: Update Notification Job
+
+Update `notify` job to include deployment status:
+
+```yaml
+  notify:
+    name: Send Notifications
+    needs: [trigger_dag, download_outputs, validate, check_bias, compare_and_deploy, build_and_deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      # ... existing steps ...
+      - name: Send Email Notification
+        env:
+          EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
+          EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+        run: |
+          python ci-cd/scripts/send_notification.py \
+            --status ${{ job.status }} \
+            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} \
+            --deployment-url ${{ needs.build_and_deploy.outputs.service_url || 'N/A' }}
+```
+
+---
+
+### **PHASE 4: Set up Artifact Registry** (30 minutes)
+
+#### Step 4.1: Create Artifact Registry Repository
+
+```bash
+# Create Artifact Registry repository
+gcloud artifacts repositories create mlops-models \
+    --repository-format=docker \
+    --location=us-east1 \
+    --description="DataCraft application containers"
+
+# Configure Docker authentication
+gcloud auth configure-docker us-east1-docker.pkg.dev
+```
+
+**Note**: This is a one-time setup. The CI/CD pipeline will handle building and pushing automatically.
 
 ---
 
@@ -818,73 +634,63 @@ jobs:
 
 ```bash
 # Test metadata loading
-cd model-serving
-python -m app.metadata_loader
+cd frontend
+python -c "from metadata_loader import MetadataLoader; loader = MetadataLoader('your-project', 'your-bucket'); print(loader.get_best_model_name())"
 
-# Test inference
-python -m app.predict
+# Test Docker build
+cd ..
+docker build -f frontend/Dockerfile -t datacraft-app:test .
 
-# Test server
-python -m app.serve
-# In another terminal:
-curl http://localhost:8080/health
-curl -X POST http://localhost:8080/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_query": "What are total sales by region?",
-    "dataset_name": "orders",
-    "dataset_metadata": "{...}"
-  }'
+# Test Docker run
+docker run -p 8501:8501 \
+  -e GCP_PROJECT_ID=your-project \
+  -e BQ_DATASET=datacraft_ml \
+  -e GCS_BUCKET_NAME=your-bucket \
+  -e GCP_REGION=us-east1 \
+  datacraft-app:test
+
+# Access Streamlit UI at http://localhost:8501
 ```
 
 #### Step 6.2: Test Deployment
 
 ```bash
-# After deployment, test endpoint
-ENDPOINT_ID="your-endpoint-id"
-PROJECT_ID="datacraft-479223"
+# After deployment, get Cloud Run URL
+gcloud run services describe datacraft-app \
+  --region=us-east1 \
+  --format="value(status.url)"
 
-curl -X POST \
-  "https://$LOCATION-aiplatform.googleapis.com/v1/projects/$PROJECT_ID/locations/$LOCATION/endpoints/$ENDPOINT_ID:predict" \
-  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "instances": [{
-      "user_query": "What are total sales?",
-      "dataset_name": "orders",
-      "dataset_metadata": "{...}"
-    }]
-  }'
+# Access the deployed app
+# Open URL in browser: https://datacraft-app-xxxxx-uc.a.run.app
+
+# Test health (if you add health endpoint)
+curl https://datacraft-app-xxxxx-uc.a.run.app/health
 ```
 
 ---
 
 ## 🎯 Summary Checklist
 
-### Phase 1: Inference Codebase ✅
-- [ ] Create `model-serving/` directory structure
-- [ ] Implement `metadata_loader.py`
-- [ ] Implement `llm_client.py`
-- [ ] Implement `predict.py`
-- [ ] Implement `serve.py` (FastAPI)
-- [ ] Test locally
+### Phase 1: Metadata Loader ✅
+- [ ] Create `frontend/metadata_loader.py`
+- [ ] Update `frontend/app.py` to use metadata loader
+- [ ] Test metadata loading locally
 
 ### Phase 2: Docker Container ✅
-- [ ] Create `Dockerfile`
-- [ ] Create `requirements.txt`
-- [ ] Create `.dockerignore`
+- [ ] Update `frontend/Dockerfile` to include model-training scripts
+- [ ] Update `frontend/requirements.txt` if needed
+- [ ] Create `.dockerignore` at project root
 - [ ] Build and test image locally
 
-### Phase 3: Artifact Registry ✅
-- [ ] Create Artifact Registry repository
-- [ ] Configure Docker auth
-- [ ] Build and push image
+### Phase 3: CI/CD Pipeline ✅
+- [ ] Add `build_and_deploy` job to `.github/workflows/model-training-ci-cd.yml`
+- [ ] Configure Cloud Run deployment
+- [ ] Update notification job to include deployment URL
+- [ ] Test full pipeline
 
-### Phase 4: Vertex AI Deployment ✅
-- [ ] Create `deploy_to_vertex.py` script
-- [ ] Add deployment job to CI/CD pipeline
-- [ ] Deploy to Vertex AI endpoint
-- [ ] Verify endpoint is accessible
+### Phase 4: Artifact Registry ✅
+- [ ] Create Artifact Registry repository (one-time)
+- [ ] Verify Docker auth works
 
 ### Phase 5: Monitoring ✅
 - [ ] Create `monitor_production.py` script
@@ -894,15 +700,39 @@ curl -X POST \
 
 ### Phase 6: Testing ✅
 - [ ] Test metadata loading
-- [ ] Test inference locally
-- [ ] Test deployed endpoint
-- [ ] Verify monitoring works
+- [ ] Test Docker build locally
+- [ ] Test deployed Cloud Run service
+- [ ] Verify frontend works with best model
 
 ---
 
 ## 📊 Architecture Diagram
 
 ```
+┌─────────────────────────────────────────────────────────────┐
+│         SINGLE CI/CD PIPELINE (SEQUENTIAL)                  │
+│                                                              │
+│  Push to main                                                │
+│    ↓                                                         │
+│  1. Trigger Airflow DAG (Training/Eval)                     │
+│    ↓                                                         │
+│  2. Wait for Airflow to finish                               │
+│    ↓                                                         │
+│  3. Download Best Model Metadata from GCS                   │
+│    ↓                                                         │
+│  4. Validate Performance + Bias Check                       │
+│    ↓                                                         │
+│  5. Compare with Production                                  │
+│    ↓                                                         │
+│  6. Build Docker Image (Frontend + Backend)                 │
+│    ↓                                                         │
+│  7. Push to Artifact Registry                                │
+│    ↓                                                         │
+│  8. Deploy to Cloud Run                                      │
+│    ↓                                                         │
+│  9. Notify                                                   │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                    TRAINING PHASE (DONE)                     │
 │                                                              │
@@ -922,44 +752,25 @@ curl -X POST \
 └─────────────────────────────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                  DEPLOYMENT PHASE (TO BUILD)                │
+│              PRODUCTION SERVING (Cloud Run)                  │
 │                                                              │
-│  GitHub Actions CI/CD                                        │
+│  User Browser                                                │
 │    ↓                                                         │
-│  Build Docker Image (inference code)                        │
+│  Streamlit UI (frontend/app.py)                             │
+│    - Loads metadata from GCS on startup                      │
+│    - Gets best model name & config                           │
 │    ↓                                                         │
-│  Push to Artifact Registry                                  │
-│    us-east1-docker.pkg.dev/.../inference-service:latest    │
+│  QueryHandler (frontend/query_handler.py)                    │
+│    - Uses best model from metadata                           │
+│    - Calls Gemini API with tuned hyperparameters            │
 │    ↓                                                         │
-│  Deploy to Vertex AI Endpoint                               │
-│    - Container starts                                        │
-│    - Loads metadata from GCS                                │
-│    - Initializes Gemini client                              │
-│    - Exposes REST API                                        │
-└─────────────────────────────────────────────────────────────┘
-                           ↓
-┌─────────────────────────────────────────────────────────────┐
-│                  PRODUCTION SERVING                         │
-│                                                              │
-│  User Request                                               │
-│    POST /predict                                            │
-│    {                                                        │
-│      "user_query": "What are total sales?",                 │
-│      "dataset_name": "orders",                              │
-│      "dataset_metadata": "{...schema...}"                  │
-│    }                                                        │
+│  BigQuery Execution                                          │
+│    - Executes generated SQL                                  │
 │    ↓                                                         │
-│  Inference Service                                          │
-│    - Loads best model config from metadata                 │
-│    - Calls Gemini API with tuned hyperparameters           │
-│    - Returns SQL + visualization config                    │
+│  Visualization Engine                                        │
+│    - Renders charts using Plotly                              │
 │    ↓                                                         │
-│  Response                                                   │
-│    {                                                        │
-│      "sql_query": "SELECT ...",                            │
-│      "visualization_config": {...},                        │
-│      "model_used": "gemini-2.5-flash"                      │
-│    }                                                        │
+│  User sees results in Streamlit UI                           │
 └─────────────────────────────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -986,17 +797,15 @@ curl -X POST \
 
 ---
 
-## 🔑 Key Files to Create
+## 🔑 Key Files to Create/Update
 
-1. **`model-serving/app/metadata_loader.py`** - Load config from GCS
-2. **`model-serving/app/llm_client.py`** - Gemini API client
-3. **`model-serving/app/predict.py`** - Inference logic
-4. **`model-serving/app/serve.py`** - FastAPI server
-5. **`model-serving/Dockerfile`** - Container definition
-6. **`model-serving/requirements.txt`** - Dependencies
-7. **`ci-cd/scripts/deploy_to_vertex.py`** - Deployment script
-8. **`ci-cd/scripts/monitor_production.py`** - Monitoring script
-9. **`.github/workflows/monitor-production.yml`** - Scheduled monitoring
+1. **`frontend/metadata_loader.py`** - Load best model config from GCS ⭐ NEW
+2. **`frontend/app.py`** - Update to use metadata loader ⭐ UPDATE
+3. **`frontend/Dockerfile`** - Update to include model-training scripts ⭐ UPDATE
+4. **`.dockerignore`** - Create at project root ⭐ NEW
+5. **`.github/workflows/model-training-ci-cd.yml`** - Add build_and_deploy job ⭐ UPDATE
+6. **`ci-cd/scripts/monitor_production.py`** - Monitoring script ⭐ NEW
+7. **`.github/workflows/monitor-production.yml`** - Scheduled monitoring ⭐ NEW
 
 ---
 
@@ -1026,14 +835,21 @@ curl -X POST \
 
 ---
 
-**Estimated Total Time**: 8-12 hours
+**Estimated Total Time**: 4-6 hours
 
 **Priority Order**:
-1. Phase 1 (Inference codebase) - **CRITICAL**
-2. Phase 2-3 (Docker + Registry) - **CRITICAL**
-3. Phase 4 (Deployment) - **CRITICAL**
-4. Phase 5 (Monitoring) - **IMPORTANT**
-5. Phase 6 (Testing) - **ONGOING**
+1. Phase 1 (Metadata Loader) - **CRITICAL** (1 hour)
+2. Phase 2 (Docker Update) - **CRITICAL** (1 hour)
+3. Phase 3 (CI/CD Pipeline) - **CRITICAL** (1 hour)
+4. Phase 4 (Artifact Registry) - **CRITICAL** (30 min)
+5. Phase 5 (Monitoring) - **IMPORTANT** (2-3 hours)
+6. Phase 6 (Testing) - **ONGOING** (1-2 hours)
+
+**Key Changes from Original Plan**:
+- ✅ Single sequential CI/CD pipeline (not separate)
+- ✅ Frontend + Backend in one Docker image
+- ✅ Deploy to Cloud Run (better for Streamlit)
+- ✅ Simpler architecture (no separate API service needed)
 
 ---
 
