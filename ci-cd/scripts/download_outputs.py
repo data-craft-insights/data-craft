@@ -83,7 +83,7 @@ def main():
         config = load_config()
         gcp_config = config['gcp']
         project_id = gcp_config['project_id']
-        bucket_name = gcp_config['bucket_name']
+        bucket_name = gcp_config['bucket_name'].strip()  # Strip any leading/trailing whitespace
         
         # DAG saves to best_model_responses/ path
         base_path = "best_model_responses"
