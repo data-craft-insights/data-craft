@@ -283,7 +283,7 @@ jobs:
             --timeout 300 \
             --set-env-vars GCP_PROJECT_ID=${{ env.GCP_PROJECT_ID }},BQ_DATASET=datacraft_ml,GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME || 'isha-retail-data' }},GCP_REGION=us-east1 \
             --service-account mlops-ci-cd@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
-            --format="value(status.url)" 2>&1)
+            --format="value(status.url)" 2>/dev/null)
           
           echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
           echo "✓ Deployed to: $SERVICE_URL"
