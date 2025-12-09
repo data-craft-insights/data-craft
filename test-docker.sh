@@ -10,7 +10,14 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Building Docker Image${NC}"
 echo -e "${BLUE}========================================${NC}"
-docker build -f frontend/Dockerfile -t datacraft-frontend:local .
+
+# Check if --no-cache flag should be used
+if [ "$1" == "--no-cache" ]; then
+    echo -e "${YELLOW}Building without cache...${NC}"
+    docker build --no-cache -f frontend/Dockerfile -t datacraft-frontend:local .
+else
+    docker build -f frontend/Dockerfile -t datacraft-frontend:local .
+fi
 
 if [ $? -ne 0 ]; then
     echo -e "${YELLOW}Build failed!${NC}"

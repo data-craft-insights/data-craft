@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r frontend/requirements.txt
 COPY model-training/scripts/ ./model-training/scripts/
 
 # Create directories for optional dependencies
-RUN mkdir -p ./shared ./data-pipeline/scripts
+RUN mkdir -p ./shared ./data-pipeline/scripts ./model_1/v2_vertex
 
 # Copy helper script
 COPY frontend/copy-optional.sh /tmp/copy-optional.sh
@@ -34,8 +34,8 @@ RUN /tmp/copy-optional.sh && rm -rf /tmp/build-context /tmp/copy-optional.sh || 
 # Copy frontend application
 COPY frontend/ ./frontend/
 
-# Set Python path to include model-training scripts and shared utilities
-ENV PYTHONPATH="/app:/app/model-training/scripts:/app/shared:/app/data-pipeline/scripts:${PYTHONPATH}"
+# Set Python path to include model-training scripts, shared utilities, and model_1
+ENV PYTHONPATH="/app:/app/model-training/scripts:/app/shared:/app/data-pipeline/scripts:/app/model_1/v2_vertex:${PYTHONPATH}"
 
 # Expose Streamlit port
 EXPOSE 8501

@@ -18,3 +18,12 @@ else
     echo "data-pipeline/scripts not found or empty, skipping"
 fi
 
+# Copy model_1/v2_vertex if it exists (needed for example_provider)
+if [ -d "/tmp/build-context/model_1/v2_vertex" ] && [ "$(ls -A /tmp/build-context/model_1/v2_vertex 2>/dev/null)" ]; then
+    echo "Copying model_1/v2_vertex..."
+    mkdir -p /app/model_1/v2_vertex
+    cp -r /tmp/build-context/model_1/v2_vertex/* /app/model_1/v2_vertex/ 2>/dev/null || true
+else
+    echo "model_1/v2_vertex not found or empty, skipping"
+fi
+
