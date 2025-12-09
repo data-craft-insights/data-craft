@@ -31,7 +31,8 @@ class QueryVisualizationHelper:
         self, 
         user_query: str, 
         dataset_context: str,
-        few_shot_examples: str = FEW_SHOT_EXAMPLES
+        few_shot_examples: str = FEW_SHOT_EXAMPLES,
+        model_name: str = "gemini-1.5-pro"
     ) -> str:
         """
         Build prompt for Gemini (to be used by Airflow Vertex AI operator)
@@ -56,6 +57,19 @@ class QueryVisualizationHelper:
         prompt = build_prompt(user_query, dataset_context, few_shot_examples)
         
         self.logger.info(f"✓ Built prompt ({len(prompt)} characters)")
+
+        # 🔹 Log the final prompt that will be sent to the LLM
+        try:
+            log_prompt(
+                prompt_text=prompt,
+                model_name=model_name,
+                user_id="airflow_pipeline",
+                channel="airflow",
+                task_type="sql_viz_generation",
+            )
+            self.logger.info("✓ Logged prompt to BigQuery")
+        except Exception as e:
+            self.logger.warning(f"Failed to log prompt: {e}")
         
         return prompt
     
@@ -315,6 +329,16 @@ def build_prompt_task(**context):
     # Get inputs from XCom or DAG config
     ti = context['ti']
     user_query = context['dag_run'].conf.get('user_query', 'Show me sales data')
+
+    # get model name from DAG params (or default)
+    model_name = context['dag'].params.get('model_name', 'gemini-1.5-pro')
+    ...
+    # Build prompt
+    prompt = helper.build_gemini_prompt(
+        user_query=user_query,
+        dataset_context=llm_context,
+        model_name=model_name,
+    )
     
     # Get metadata from previous task
     metadata_result = ti.xcom_pull(task_ids='load_metadata')
