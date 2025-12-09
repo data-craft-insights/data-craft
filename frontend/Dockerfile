@@ -17,11 +17,19 @@ RUN pip install --no-cache-dir -r frontend/requirements.txt
 # These are imported by frontend/query_handler.py
 COPY model-training/scripts/ ./model-training/scripts/
 
-# Copy shared utilities if they exist
-COPY shared/ ./shared/ 2>/dev/null || true
+# Create directories for optional dependencies
+RUN mkdir -p ./shared ./data-pipeline/scripts
 
-# Copy data-pipeline scripts if needed for unstructured data
-COPY data-pipeline/scripts/ ./data-pipeline/scripts/ 2>/dev/null || true
+# Copy helper script
+COPY frontend/copy-optional.sh /tmp/copy-optional.sh
+RUN chmod +x /tmp/copy-optional.sh
+
+# Copy entire build context to temp location for optional directory handling
+# This allows us to check if directories exist before copying
+COPY . /tmp/build-context/
+
+# Run helper script to conditionally copy from temp location to final location
+RUN /tmp/copy-optional.sh && rm -rf /tmp/build-context /tmp/copy-optional.sh || true
 
 # Copy frontend application
 COPY frontend/ ./frontend/
