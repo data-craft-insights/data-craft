@@ -35,7 +35,7 @@ class MetadataLoader:
         
         Returns:
             Dictionary with:
-            - selected_model: "gemini-2.5-flash"
+            - selected_model: "gemini-2.5-pro"
             - composite_score: 89.5
             - performance_score: 92.0
             - bias_score: 25.0
@@ -103,12 +103,12 @@ class MetadataLoader:
         """Get best model name from latest metadata"""
         try:
             metadata = self.load_latest_metadata()
-            model_name = metadata.get("selected_model", "gemini-2.5-flash")
+            model_name = metadata.get("selected_model", "gemini-2.5-pro")
             logger.info(f"Best model: {model_name}")
             return model_name
         except Exception as e:
             logger.warning(f"Failed to load metadata, using default: {e}")
-            return "gemini-2.5-flash"
+            return "gemini-2.5-pro"
     
     def get_hyperparameters(self) -> Dict:
         """
@@ -144,7 +144,7 @@ class MetadataLoader:
         
         Returns:
             {
-                "selected_model": "gemini-2.5-flash",
+                "selected_model": "gemini-2.5-pro",
                 "composite_score": 89.5,
                 "performance_score": 92.0,
                 "bias_score": 25.0,
@@ -155,7 +155,7 @@ class MetadataLoader:
         try:
             metadata = self.load_latest_metadata()
             return {
-                "selected_model": metadata.get("selected_model", "gemini-2.5-flash"),
+                "selected_model": metadata.get("selected_model", "gemini-2.5-pro"),
                 "composite_score": metadata.get("composite_score", 0),
                 "performance_score": metadata.get("performance_score", 0),
                 "bias_score": metadata.get("bias_score", 0),
@@ -166,7 +166,7 @@ class MetadataLoader:
         except Exception as e:
             logger.error(f"Failed to get model info: {e}")
             return {
-                "selected_model": "gemini-2.5-flash",
+                "selected_model": "gemini-2.5-pro",
                 "composite_score": 0,
                 "performance_score": 0,
                 "bias_score": 0,

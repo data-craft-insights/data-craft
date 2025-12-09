@@ -195,7 +195,7 @@ if 'handler' not in st.session_state:
         st.session_state.metadata_loader = metadata_loader
     except Exception as e:
         # Fallback to default or environment variable
-        config['model_name'] = os.getenv('BEST_MODEL_NAME', 'gemini-2.5-flash')
+        config['model_name'] = os.getenv('BEST_MODEL_NAME', 'gemini-2.5-pro')
         st.warning(f"⚠️ Could not load metadata from GCS: {e}. Using default model: {config['model_name']}")
         st.session_state.best_model_metadata = None
         st.session_state.metadata_loader = None
