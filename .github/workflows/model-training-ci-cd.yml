@@ -288,6 +288,23 @@ jobs:
           echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
           echo "✓ Deployed to: $SERVICE_URL"
 
+      - name: Setup Terraform
+        if: success()
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Apply Monitoring Infrastructure
+        if: success()
+        working-directory: monitoring
+        env:
+          TF_VAR_cloud_run_url: ${{ steps.deploy.outputs.url }}
+          TF_VAR_notification_email: ${{ secrets.MONITORING_EMAIL || 'sharmasanskar004@gmail.com' }}
+        run: |
+          terraform init
+          terraform apply -auto-approve
+          echo "✓ Monitoring infrastructure deployed"
+
   notify:
     name: Send Notifications
     needs: [trigger_dag, download_outputs, validate, check_bias, compare_and_deploy, build_and_deploy]
