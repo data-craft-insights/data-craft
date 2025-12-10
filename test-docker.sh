@@ -37,12 +37,13 @@ echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Starting Container${NC}"
 echo -e "${BLUE}========================================${NC}"
 
-# Check if gcp directory exists
+# Build volume args safely to allow paths with spaces
+MOUNT_ARGS=()
 if [ ! -d "gcp" ]; then
     echo -e "${YELLOW}Warning: gcp/ directory not found. Container will run without mounted credentials.${NC}"
-    MOUNT_CMD=""
 else
-    MOUNT_CMD="-v $(pwd)/gcp:/app/gcp:ro"
+    MOUNT_PATH="$(pwd)/gcp"
+    MOUNT_ARGS=(-v "$MOUNT_PATH:/app/gcp:ro")
 fi
 
 docker run -d \
@@ -52,7 +53,7 @@ docker run -d \
   -e BQ_DATASET=datacraft_ml \
   -e GCS_BUCKET_NAME=isha-retail-data \
   -e GCP_REGION=us-central1 \
-  $MOUNT_CMD \
+  "${MOUNT_ARGS[@]}" \
   datacraft-frontend:local
 
 if [ $? -ne 0 ]; then
@@ -71,4 +72,3 @@ echo -e "  ${YELLOW}Stop container:${NC}   docker stop datacraft-test"
 echo -e "  ${YELLOW}Remove container:${NC} docker stop datacraft-test && docker rm datacraft-test"
 echo -e "  ${YELLOW}Shell access:${NC}     docker exec -it datacraft-test /bin/bash"
 echo -e "  ${YELLOW}Remove image:${NC}     docker rmi datacraft-frontend:local\n"
-
