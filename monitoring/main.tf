@@ -12,6 +12,11 @@ provider "google" {
   region  = "us-east1"
 }
 
+# Local variable to extract hostname from URL
+locals {
+  cloud_run_hostname = replace(replace(replace(var.cloud_run_url, "https://", ""), "http://", ""), "/", "")
+}
+
 ########################
 # Notification channel
 ########################
@@ -42,7 +47,7 @@ resource "google_monitoring_uptime_check_config" "cloudrun_uptime" {
     type = "uptime_url"
     labels = {
       project_id = "datacraft-data-pipeline"
-      host       = var.cloud_run_url
+      host       = local.cloud_run_hostname
     }
   }
 }
@@ -60,7 +65,7 @@ resource "google_monitoring_alert_policy" "uptime_alert" {
       filter = <<-EOT
         metric.type="monitoring.googleapis.com/uptime_check/check_passed"
         AND resource.type="uptime_url"
-        AND resource.labels.host="${var.cloud_run_url}"
+        AND resource.labels.host="${local.cloud_run_hostname}"
       EOT
       comparison      = "COMPARISON_LT"
       threshold_value = 1
@@ -183,12 +188,14 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           xyChart = {
             dataSets = [
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_RATE"
-                    crossSeriesReducer = "REDUCE_SUM"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_RATE"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
                   }
                 }
               }
@@ -200,34 +207,40 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           xyChart = {
             dataSets = [
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_latencies\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_DELTA"
-                    crossSeriesReducer = "REDUCE_PERCENTILE_50"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_latencies\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
+                      crossSeriesReducer = "REDUCE_PERCENTILE_50"
+                    }
                   }
                 }
                 plotType = "LINE"
               },
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_latencies\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_DELTA"
-                    crossSeriesReducer = "REDUCE_PERCENTILE_95"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_latencies\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
+                      crossSeriesReducer = "REDUCE_PERCENTILE_95"
+                    }
                   }
                 }
                 plotType = "LINE"
               },
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_latencies\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_DELTA"
-                    crossSeriesReducer = "REDUCE_PERCENTILE_99"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_latencies\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
+                      crossSeriesReducer = "REDUCE_PERCENTILE_99"
+                    }
                   }
                 }
                 plotType = "LINE"
@@ -240,12 +253,14 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           xyChart = {
             dataSets = [
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/error_count\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_DELTA"
-                    crossSeriesReducer = "REDUCE_SUM"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/error_count\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
                   }
                 }
               }
@@ -257,12 +272,14 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           xyChart = {
             dataSets = [
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_RATE"
-                    crossSeriesReducer = "REDUCE_SUM"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_RATE"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
                   }
                 }
               }
@@ -274,12 +291,14 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           xyChart = {
             dataSets = [
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/container/instance_count\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_MEAN"
-                    crossSeriesReducer = "REDUCE_SUM"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/container/instance_count\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_MEAN"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
                   }
                 }
               }
@@ -291,12 +310,14 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           xyChart = {
             dataSets = [
               {
-                timeSeriesFilter = {
-                  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/container/cpu/utilizations\""
-                  aggregation = {
-                    alignmentPeriod   = "60s"
-                    perSeriesAligner  = "ALIGN_MEAN"
-                    crossSeriesReducer = "REDUCE_MEAN"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/container/cpu/utilizations\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_MEAN"
+                      crossSeriesReducer = "REDUCE_MEAN"
+                    }
                   }
                 }
               }
