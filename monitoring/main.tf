@@ -249,16 +249,16 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           }
         },
         {
-          title = "Error Count"
+          title = "Error Count (5xx)"
           xyChart = {
             dataSets = [
               {
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/error_count\""
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"5xx\""
                     aggregation = {
                       alignmentPeriod   = "60s"
-                      perSeriesAligner   = "ALIGN_DELTA"
+                      perSeriesAligner   = "ALIGN_RATE"
                       crossSeriesReducer = "REDUCE_SUM"
                     }
                   }
@@ -268,13 +268,13 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           }
         },
         {
-          title = "Error Rate (%)"
+          title = "Success Rate (2xx)"
           xyChart = {
             dataSets = [
               {
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\""
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"2xx\""
                     aggregation = {
                       alignmentPeriod   = "60s"
                       perSeriesAligner   = "ALIGN_RATE"
@@ -306,7 +306,7 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
           }
         },
         {
-          title = "CPU Utilization"
+          title = "CPU Utilization (%)"
           xyChart = {
             dataSets = [
               {
@@ -314,9 +314,93 @@ resource "google_monitoring_dashboard" "cloudrun_dashboard" {
                   timeSeriesFilter = {
                     filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/container/cpu/utilizations\""
                     aggregation = {
+                      alignmentPeriod     = "60s"
+                      perSeriesAligner    = "ALIGN_DELTA"
+                      crossSeriesReducer  = "REDUCE_MEAN"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          title = "Memory Utilization (%)"
+          xyChart = {
+            dataSets = [
+              {
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/container/memory/utilizations\""
+                    aggregation = {
+                      alignmentPeriod     = "60s"
+                      perSeriesAligner    = "ALIGN_MEAN"
+                      crossSeriesReducer   = "REDUCE_MEAN"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          title = "Request Count by Status Code"
+          xyChart = {
+            dataSets = [
+              {
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"2xx\""
+                    aggregation = {
                       alignmentPeriod   = "60s"
-                      perSeriesAligner   = "ALIGN_MEAN"
-                      crossSeriesReducer = "REDUCE_MEAN"
+                      perSeriesAligner   = "ALIGN_RATE"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
+                  }
+                }
+                plotType = "LINE"
+              },
+              {
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"4xx\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_RATE"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
+                  }
+                }
+                plotType = "LINE"
+              },
+              {
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"5xx\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_RATE"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
+                  }
+                }
+                plotType = "LINE"
+              }
+            ]
+          }
+        },
+        {
+          title = "Container Startup Latency (Cold Starts)"
+          xyChart = {
+            dataSets = [
+              {
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"datacraft-app\" AND metric.type=\"run.googleapis.com/container/startup_latencies\""
+                    aggregation = {
+                      alignmentPeriod   = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
+                      crossSeriesReducer = "REDUCE_PERCENTILE_95"
                     }
                   }
                 }
