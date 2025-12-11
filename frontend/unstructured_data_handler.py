@@ -474,6 +474,32 @@ class UnstructuredDataHandler:
             self.logger.error(f"Failed to list tables: {str(e)}")
             return []
 
+    def fetch_sample_records(self, doc_type: str, limit: int = 3) -> List[Dict[str, Any]]:
+        """
+        Fetch sample rows from BigQuery for a given document type.
+        
+        Args:
+            doc_type: Document type/dataset name
+            limit: Number of rows to retrieve
+        
+        Returns:
+            List of row dictionaries
+        """
+        table_name = f"{self._normalize_doc_type(doc_type)}_processed"
+        table_id = f"{self.project_id}.{self.dataset_id}.{table_name}"
+        
+        try:
+            table = self.bq_client.get_table(table_id)
+            rows = self.bq_client.list_rows(table, max_results=limit)
+            df = rows.to_dataframe()
+            return df.to_dict("records")
+        except NotFound:
+            self.logger.warning(f"Cannot fetch samples — table {table_id} not found.")
+        except Exception as e:
+            self.logger.error(f"Failed to fetch samples from {table_id}: {str(e)}")
+        
+        return []
+
 
 if __name__ == "__main__":
     # Test the handler

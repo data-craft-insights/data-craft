@@ -176,6 +176,8 @@ if 'uploaded_example_files' not in st.session_state:
     st.session_state.uploaded_example_files = []
 if 'extracted_data' not in st.session_state:
     st.session_state.extracted_data = []
+if 'extracted_data_dataset' not in st.session_state:
+    st.session_state.extracted_data_dataset = None
 if 'processing_complete' not in st.session_state:
     st.session_state.processing_complete = False
 if 'handler' not in st.session_state:
@@ -307,6 +309,8 @@ def render_unstructured_sidebar():
                 st.session_state.processing_complete = True
                 st.session_state.show_description = True
                 st.session_state.handler.table_name = f"{table['name']}_processed"
+                st.session_state.extracted_data = []
+                st.session_state.extracted_data_dataset = None
                 st.rerun()
     
     st.markdown("---")
@@ -558,6 +562,7 @@ def process_unstructured_files():
                 )
             
             st.session_state.extracted_data = extracted_data
+            st.session_state.extracted_data_dataset = st.session_state.doc_type
             
             # Store in BigQuery
             with st.spinner("💾 Storing in BigQuery..."):
@@ -582,11 +587,18 @@ def process_unstructured_files():
 def render_unstructured_overview():
     """Show overview of processed unstructured data"""
     dataset_name = st.session_state.selected_dataset
+    cached_dataset = st.session_state.get('extracted_data_dataset')
+    preview_data = st.session_state.extracted_data if st.session_state.extracted_data and cached_dataset == dataset_name else []
+    if not preview_data:
+        preview_data = st.session_state.unstructured_handler.fetch_sample_records(dataset_name, limit=3)
+        if preview_data:
+            st.session_state.extracted_data = preview_data
+            st.session_state.extracted_data_dataset = dataset_name
     
     st.markdown(f"""
     <div class="unstructured-header">
         <div class="dataset-title">📄 {dataset_name.title()} Documents</div>
-        <div class="dataset-overview">Extracted and structured data from {len(st.session_state.extracted_data) if st.session_state.extracted_data else 'your'} PDF documents</div>
+        <div class="dataset-overview">Extracted and structured data from {len(preview_data) if preview_data else 'your'} PDF documents</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -632,21 +644,32 @@ def render_unstructured_overview():
     st.markdown("<br>", unsafe_allow_html=True)
     
     # Show extracted data preview
-    if st.session_state.extracted_data:
+    if preview_data:
         col_left, col_right = st.columns(2)
         
         with col_left:
             st.markdown('<div class="insight-card">', unsafe_allow_html=True)
             st.markdown('<div class="insight-title">📄 Extracted Data Preview</div>', unsafe_allow_html=True)
             
-            for i, data in enumerate(st.session_state.extracted_data[:3], 1):
+            for i, data in enumerate(preview_data[:3], 1):
+                display_record = {}
+                for key, value in data.items():
+                    if key == '_metadata':
+                        continue
+                    if isinstance(value, str):
+                        stripped = value.strip()
+                        if stripped and stripped[0] in "{[" and stripped[-1] in "}]":
+                            try:
+                                display_record[key] = json.loads(stripped)
+                                continue
+                            except Exception:
+                                pass
+                    display_record[key] = value
                 with st.expander(f"Document {i}", expanded=(i==1)):
-                    # Remove _metadata for cleaner display
-                    display_data = {k: v for k, v in data.items() if k != '_metadata'}
-                    st.json(display_data)
+                    st.json(display_record)
             
-            if len(st.session_state.extracted_data) > 3:
-                st.info(f"... and {len(st.session_state.extracted_data) - 3} more documents")
+            if len(preview_data) > 3:
+                st.info(f"... and {len(preview_data) - 3} more documents")
             
             st.markdown('</div>', unsafe_allow_html=True)
         
@@ -679,6 +702,7 @@ def render_unstructured_overview():
         if st.button("🔄 Upload More", use_container_width=True):
             st.session_state.uploaded_pdfs = []
             st.session_state.extracted_data = []
+            st.session_state.extracted_data_dataset = None
             st.session_state.processing_complete = False
             st.rerun()
     
