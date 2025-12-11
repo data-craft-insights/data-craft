@@ -49,7 +49,7 @@ class UnstructuredDataHandler:
         self.metadata_manager = MetadataManager(project_id, dataset_id)
         
         # Model configuration
-        self.model_name = "gemini-2.0-flash-exp"
+        self.model_name = "gemini-2.5-pro"
         self.model = GenerativeModel(self.model_name)
 
     def _normalize_doc_type(self, doc_type: str) -> str:
