@@ -21,6 +21,7 @@ venv/
 .env.production
 .env.local
 *.env
+fvenv/
 
 # ------------------------------
 # AIRFLOW
@@ -123,3 +124,5 @@ db_data/
 # ------------------------------
 .ipynb_checkpoints/
 *.ipynb_checkpoint
+
+frontend/venv310/

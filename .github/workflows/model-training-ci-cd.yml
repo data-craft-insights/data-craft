@@ -9,6 +9,7 @@ on:
       - 'model-training/data/user_queries.txt'
       - 'model-training/scripts/**'
       - 'ci-cd/**'
+      - 'frontend/**'
       - '.github/workflows/model-training-ci-cd.yml'
   workflow_dispatch:
     inputs:
@@ -23,7 +24,7 @@ on:
 
 env:
   PYTHON_VERSION: '3.9'
-  GCP_PROJECT_ID: 'datacraft-478300'
+  GCP_PROJECT_ID: 'datacraft-data-pipeline'
 
 jobs:
   trigger_dag:
@@ -227,9 +228,86 @@ jobs:
         run: |
           echo "Skipping production deployment - running in local mode"
 
+  build_and_deploy:
+    name: Build Docker Image & Deploy
+    needs: [compare_and_deploy]
+    runs-on: ubuntu-latest
+    if: needs.compare_and_deploy.result == 'success'
+    outputs:
+      service_url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker us-east1-docker.pkg.dev
+
+      - name: Get commit SHA
+        id: commit
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Build Docker Image
+        run: |
+          docker build -f frontend/Dockerfile \
+            -t us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:${{ steps.commit.outputs.sha }} \
+            -t us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:latest \
+            .
+
+      - name: Push to Artifact Registry
+        run: |
+          docker push us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:${{ steps.commit.outputs.sha }}
+          docker push us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:latest
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        run: |
+          SERVICE_URL=$(gcloud run deploy datacraft-app \
+            --image us-east1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/mlops-models/datacraft-app:${{ steps.commit.outputs.sha }} \
+            --platform managed \
+            --region us-east1 \
+            --allow-unauthenticated \
+            --port 8501 \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 300 \
+            --set-env-vars GCP_PROJECT_ID=${{ env.GCP_PROJECT_ID }},BQ_DATASET=datacraft_ml,GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME || 'isha-retail-data' }},GCP_REGION=us-east1 \
+            --service-account mlops-ci-cd@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+            --format="value(status.url)" 2>/dev/null)
+          
+          echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "✓ Deployed to: $SERVICE_URL"
+
+      - name: Setup Terraform
+        if: success()
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Apply Monitoring Infrastructure
+        if: success()
+        working-directory: monitoring
+        env:
+          TF_VAR_cloud_run_url: ${{ steps.deploy.outputs.url }}
+          TF_VAR_notification_email: ${{ secrets.MONITORING_EMAIL || 'sharmasanskar004@gmail.com' }}
+        run: |
+          terraform init
+          terraform apply -auto-approve
+          echo "✓ Monitoring infrastructure deployed"
+
   notify:
     name: Send Notifications
-    needs: [trigger_dag, download_outputs, validate, check_bias, compare_and_deploy]
+    needs: [trigger_dag, download_outputs, validate, check_bias, compare_and_deploy, build_and_deploy]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -258,7 +336,9 @@ jobs:
         env:
           EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+          DEPLOYMENT_URL: ${{ needs.build_and_deploy.outputs.service_url || 'N/A' }}
         run: |
           python ci-cd/scripts/send_notification.py \
             --status ${{ job.status }} \
-            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            --workflow-run-url ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} \
+            --deployment-url ${{ env.DEPLOYMENT_URL }}

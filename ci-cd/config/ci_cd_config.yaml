@@ -2,10 +2,10 @@
 # Settings for model training pipeline automation
 
 gcp:
-  project_id: "datacraft-479223"  # Your GCP project ID
+  project_id: "datacraft-data-pipeline"  # Your GCP project ID
   region: "us-east1"  # Your GCP region
   dataset_id: "datacraft_ml"  # BigQuery dataset ID
-  bucket_name: "model-datacraft-sanskar"  # GCS bucket name for storing model artifacts
+  bucket_name: "isha-retail-data"  # GCS bucket name for storing model artifacts
 
 notifications:
   email:

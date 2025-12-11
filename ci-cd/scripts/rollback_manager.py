@@ -45,7 +45,7 @@ def get_previous_model_metrics(config: Dict) -> Optional[Dict]:
     Returns the second most recent model's metrics.
     """
     try:
-        bucket_name = config['gcp']['bucket_name']
+        bucket_name = config['gcp']['bucket_name'].strip()  # Strip any leading/trailing whitespace
         base_path = config['model_registry']['base_path']
         
         storage_client = storage.Client(project=config['gcp']['project_id'])
