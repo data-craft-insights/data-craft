@@ -32,6 +32,8 @@ from response_saver import ResponseSaver
 from query_executor import QueryExecutor
 from hyperparameter_tuner import HyperparameterTuner
 from sensitivity_analysis import SensitivityAnalyzer
+from prompt_logger import log_prompt
+
 
 # ✅ MLflow Integration for Experiment Tracking (Optional)
 MLFLOW_AVAILABLE = False
@@ -336,6 +338,20 @@ def process_queries_with_all_models(**context):
                 
                 # Build prompt
                 prompt = build_prompt(user_query, llm_context, FEW_SHOT_EXAMPLES)
+
+                 # Log prompt
+                try:
+                    log_prompt(
+                        prompt_text=prompt,
+                        model_name=model_name,
+                        user_id="batch_eval",                 # you can customize this
+                        channel="airflow_model_pipeline",     # helps you filter later
+                        task_type="sql_viz_generation",       # or "multi_model_eval"
+                    )
+                    print("  ↳ Prompt logged to prompt_logs")
+                except Exception as log_err:
+                    # Don't break the main pipeline if logging fails
+                    print(f"  ⚠ Failed to log prompt: {log_err}")
                 
                 # Call Gemini with specific model
                 response_text = _call_gemini_model(prompt, model_name)

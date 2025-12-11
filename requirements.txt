@@ -53,3 +53,9 @@ plotly
 # CI/CD
 # ========================================
 PyYAML==6.0.1
+
+# ========================================
+# To enable embedding - prompt drift detction
+# ========================================
+ google-generativeai
+ 
