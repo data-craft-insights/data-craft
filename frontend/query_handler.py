@@ -199,24 +199,34 @@ class QueryHandler:
             for func in agg_functions:
                 # ✅ Match both backticked and non-backticked versions
                 pattern = rf'\b{func}\s*\(\s*(?:CAST\s*\(\s*)?`?{re.escape(col_name)}`?(?:\s+AS\s+\w+\s*\))?\s*\)'
-                replacement = f'{func}({converted_expr})'
-                sql_query = re.sub(pattern, replacement, sql_query, flags=re.IGNORECASE)
+                sql_query = re.sub(
+                    pattern,
+                    lambda match, func=func, converted_expr=converted_expr: f'{func}({converted_expr})',
+                    sql_query,
+                    flags=re.IGNORECASE
+                )
             
             # Pattern 2: WHERE/HAVING comparisons
             comparison_ops = ['>=', '<=', '!=', '<>', '>', '<', '=']
             for op in comparison_ops:
                 escaped_op = re.escape(op)
                 pattern = rf'`?{col_name}`?\s*{escaped_op}\s*(\d+\.?\d*)'
-                replacement = rf'{converted_expr} {op} \1'
-                sql_query = re.sub(pattern, replacement, sql_query)
+                sql_query = re.sub(
+                    pattern,
+                    lambda match, op=op, converted_expr=converted_expr: f'{converted_expr} {op} {match.group(1)}',
+                    sql_query
+                )
             
             # Pattern 3: Arithmetic operations (+, -, *, /)
             arithmetic_ops = [r'\+', r'\-', r'\*', r'/']
             for op in arithmetic_ops:
                 pattern = rf'`?{col_name}`?\s*{op}\s*(\d+\.?\d*)'
                 clean_op = op.replace('\\', '')
-                replacement = rf'{converted_expr} {clean_op} \1'
-                sql_query = re.sub(pattern, replacement, sql_query)
+                sql_query = re.sub(
+                    pattern,
+                    lambda match, clean_op=clean_op, converted_expr=converted_expr: f'{converted_expr} {clean_op} {match.group(1)}',
+                    sql_query
+                )
             
             # Pattern 4: ORDER BY
             pattern = rf'\bORDER\s+BY\s+`?{col_name}`?(?:\s+(ASC|DESC))?'
@@ -227,8 +237,12 @@ class QueryHandler:
             
             # Pattern 5: BETWEEN
             pattern = rf'`?{col_name}`?\s+BETWEEN\s+(\d+\.?\d*)\s+AND\s+(\d+\.?\d*)'
-            replacement = rf'{converted_expr} BETWEEN \1 AND \2'
-            sql_query = re.sub(pattern, replacement, sql_query, flags=re.IGNORECASE)
+            sql_query = re.sub(
+                pattern,
+                lambda match, converted_expr=converted_expr: f'{converted_expr} BETWEEN {match.group(1)} AND {match.group(2)}',
+                sql_query,
+                flags=re.IGNORECASE
+            )
         
         return sql_query
     
