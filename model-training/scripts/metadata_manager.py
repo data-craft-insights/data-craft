@@ -12,6 +12,7 @@ from typing import Dict, Optional, List
 from pathlib import Path
 import sys
 from datetime import datetime
+import math
 
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import setup_logging, setup_gcp_credentials
@@ -34,8 +35,10 @@ class BigQueryJSONEncoder(json.JSONEncoder):
     def _round_floats(self, obj):
         """Recursively round floats in nested structures"""
         if isinstance(obj, float):
-            # Round to reasonable precision for BigQuery
-            return round(obj, self.float_precision)
+            # Round only finite floats; replace NaN/Inf with nulls for BigQuery
+            if math.isfinite(obj):
+                return round(obj, self.float_precision)
+            return None
         elif isinstance(obj, dict):
             return {k: self._round_floats(v) for k, v in obj.items()}
         elif isinstance(obj, (list, tuple)):
