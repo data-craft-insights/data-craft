@@ -132,7 +132,7 @@ class FeatureEngineer:
                 metadata["sample_values"][col] = self._get_sample_values(col)
             
             # Add statistics for numeric columns
-            if pd.api.types.is_numeric_dtype(self.df[col]):
+            if self._is_numeric_column(col):
                 metadata["statistics"][col] = self._get_numeric_statistics(col)
         
         self._metadata_cache = metadata
@@ -162,7 +162,9 @@ class FeatureEngineer:
         }
         
         # Add type-specific metadata
-        if pd.api.types.is_numeric_dtype(dtype):
+        if pd.api.types.is_bool_dtype(dtype):
+            col_info["data_class"] = "categorical"
+        elif self._is_numeric_column(col):
             col_info["data_class"] = "numeric"
             col_info["range"] = {
                 "min": float(self.df[col].min()),
@@ -299,10 +301,15 @@ class FeatureEngineer:
     
     def _identify_numeric_columns(self) -> List[str]:
         """Identify all numeric columns"""
-        return [
-            col for col in self.df.columns 
-            if pd.api.types.is_numeric_dtype(self.df[col])
-        ]
+        return [col for col in self.df.columns if self._is_numeric_column(col)]
+
+    def _is_numeric_column(self, col: str) -> bool:
+        """Numeric helper that excludes boolean columns"""
+        dtype = self.df[col].dtype
+        return (
+            pd.api.types.is_numeric_dtype(dtype)
+            and not pd.api.types.is_bool_dtype(dtype)
+        )
     
     def _identify_categorical_columns(self) -> List[str]:
         """Identify categorical columns"""

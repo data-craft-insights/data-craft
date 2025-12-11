@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 import pandas as pd
 from google.cloud import bigquery
+from google.cloud.exceptions import NotFound
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part, GenerationConfig
 import logging
@@ -70,6 +71,17 @@ class UnstructuredDataHandler:
         llm_context = engineer.create_llm_context()
         self.metadata_manager.store_metadata(dataset_name, metadata, llm_context)
 
+    def _table_exists(self, table_id: str) -> bool:
+        """Check if a BigQuery table exists"""
+        try:
+            self.bq_client.get_table(table_id)
+            return True
+        except NotFound:
+            return False
+        except Exception as e:
+            self.logger.warning(f"Could not verify table {table_id}: {str(e)}")
+            return False
+    
     def dataurl_to_part(self, url: str) -> Part:
         """Convert base64 data URL to Gemini Part"""
         raw = base64.b64decode(url.split(",", 1)[1])
@@ -309,6 +321,7 @@ class UnstructuredDataHandler:
         table_id = f"{self.project_id}.{self.dataset_id}.{table_name}"
         
         self.logger.info(f"Storing data in BigQuery table: {table_id}")
+        table_exists = self._table_exists(table_id)
         
         # Flatten JSON for DataFrame
         flattened_data = []
@@ -330,6 +343,7 @@ class UnstructuredDataHandler:
         
         # Create DataFrame
         df = pd.DataFrame(flattened_data)
+        sample_record = flattened_data[0] if flattened_data else {}
         
         # Normalize column names
 
@@ -351,12 +365,26 @@ class UnstructuredDataHandler:
         #             for col in df.columns
         #         ]
         
-        # Configure load job - Use CSV format for dataframe
+        # Configure load job
         job_config = bigquery.LoadJobConfig(
-            write_disposition="WRITE_TRUNCATE",  # Append to existing table
-            autodetect=True,  # Auto-detect schema
-            source_format=bigquery.SourceFormat.CSV
+            write_disposition=(
+                bigquery.WriteDisposition.WRITE_APPEND 
+                if table_exists else bigquery.WriteDisposition.WRITE_TRUNCATE
+            )
         )
+        
+        if not table_exists:
+            schema_fields = self.json_to_bigquery_schema(sample_record)
+            if schema_fields:
+                job_config.schema = schema_fields
+            else:
+                job_config.autodetect = True
+        
+        if table_exists:
+            job_config.schema_update_options = [
+                bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION
+            ]
+            self.logger.info("Table exists — appending rows and enabling schema updates.")
         
         # Load to BigQuery
         try:
