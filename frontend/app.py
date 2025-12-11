@@ -172,6 +172,8 @@ if 'show_description' not in st.session_state:
     st.session_state.show_description = True
 if 'uploaded_pdfs' not in st.session_state:
     st.session_state.uploaded_pdfs = []
+if 'uploaded_example_files' not in st.session_state:
+    st.session_state.uploaded_example_files = []
 if 'extracted_data' not in st.session_state:
     st.session_state.extracted_data = []
 if 'processing_complete' not in st.session_state:
@@ -318,13 +320,37 @@ def render_unstructured_sidebar():
         help="e.g., invoices, receipts, insurance",
         key="doc_type_input"
     )
-    
-    examples_dir = st.text_input(
-        "Examples Path (Optional)",
-        value="",
-        help="Path to example PDFs with JSONs",
-        key="examples_dir_input"
+
+    # Few-shot library selector sourced from frontend/unstructured/*
+    examples_root = Path(__file__).parent / "unstructured"
+    example_options = ["None"]
+    available_dirs = []
+    if examples_root.exists():
+        available_dirs = sorted([p.name for p in examples_root.iterdir() if p.is_dir()])
+        example_options.extend(available_dirs)
+    selected_example_option = st.selectbox(
+        "Few-Shot Example Library (Optional)",
+        options=example_options,
+        help="Select one of the packaged example libraries stored under frontend/unstructured",
+        key="examples_dir_select"
     )
+    examples_dir = None
+    if selected_example_option != "None":
+        examples_dir = str(examples_root / selected_example_option)
+
+    example_files = st.file_uploader(
+        "Upload Few-Shot Example PDF/JSON pairs (optional)",
+        type=["pdf", "json"],
+        accept_multiple_files=True,
+        help="Upload matching PDF and JSON files with the same name (e.g., invoice01.pdf & invoice01.json)",
+        key="example_uploader"
+    )
+    if example_files:
+        st.session_state.uploaded_example_files = example_files
+        st.info("Uploaded examples will override the directory path for prompting during this run.")
+    elif not example_files and st.session_state.uploaded_example_files:
+        # Preserve previously uploaded examples if widget reset
+        example_files = st.session_state.uploaded_example_files
     
     uploaded_files = st.file_uploader(
         "Select PDF files",
@@ -337,6 +363,7 @@ def render_unstructured_sidebar():
         st.session_state.uploaded_pdfs = uploaded_files
         st.session_state.doc_type = doc_type
         st.session_state.examples_dir = examples_dir if examples_dir else None
+        st.session_state.uploaded_example_files = example_files or []
         st.session_state.dataset_type = 'unstructured'
         st.session_state.processing_complete = False
         st.success(f"✅ {len(uploaded_files)} file(s) ready")
@@ -479,17 +506,55 @@ def process_unstructured_files():
     with st.spinner("🤖 Extracting data from documents..."):
         try:
             temp_paths = []
+            example_temp_dir_obj = None
+            uploaded_examples_dir = None
             with tempfile.TemporaryDirectory() as temp_dir:
                 for file in st.session_state.uploaded_pdfs:
                     temp_path = os.path.join(temp_dir, file.name)
                     with open(temp_path, 'wb') as f:
                         f.write(file.read())
                     temp_paths.append(temp_path)
+
+                example_files = st.session_state.get('uploaded_example_files') or []
+                if example_files:
+                    pdf_stems = set()
+                    json_stems = set()
+                    example_temp_dir_obj = tempfile.TemporaryDirectory()
+                    uploaded_examples_dir = example_temp_dir_obj.name
+                    for example in example_files:
+                        suffix = Path(example.name).suffix.lower()
+                        if suffix not in {'.pdf', '.json'}:
+                            st.warning(f"Skipping unsupported example file: {example.name}")
+                            continue
+                        temp_example_path = os.path.join(uploaded_examples_dir, example.name)
+                        with open(temp_example_path, 'wb') as f:
+                            f.write(example.read())
+                        stem = Path(example.name).stem
+                        if suffix == '.pdf':
+                            pdf_stems.add(stem)
+                        else:
+                            json_stems.add(stem)
+                    matched_pairs = pdf_stems & json_stems
+                    unmatched = (pdf_stems ^ json_stems)
+                    if unmatched:
+                        st.warning(
+                            "Some example files are missing their PDF or JSON counterpart: "
+                            + ", ".join(sorted(unmatched))
+                        )
+                    if matched_pairs:
+                        st.success(f"Using {len(matched_pairs)} uploaded example pair(s) for prompting.")
+                    else:
+                        st.warning("No complete PDF/JSON example pairs found. Uploaded examples will be ignored.")
+                        example_temp_dir_obj.cleanup()
+                        example_temp_dir_obj = None
+                        uploaded_examples_dir = None
+
+                resolved_examples_dir = uploaded_examples_dir or st.session_state.examples_dir
                 
                 extracted_data = st.session_state.unstructured_handler.process_multiple_files(
                     temp_paths,
                     st.session_state.doc_type,
-                    st.session_state.examples_dir
+                    resolved_examples_dir
                 )
             
             st.session_state.extracted_data = extracted_data
@@ -509,6 +574,9 @@ def process_unstructured_files():
             
         except Exception as e:
             st.error(f"❌ Processing failed: {str(e)}")
+        finally:
+            if example_temp_dir_obj is not None:
+                example_temp_dir_obj.cleanup()
 
 
 def render_unstructured_overview():

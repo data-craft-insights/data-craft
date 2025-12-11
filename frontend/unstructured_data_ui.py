@@ -9,7 +9,6 @@ import tempfile
 import os
 from datetime import datetime
 
-
 from unstructured_data_handler import UnstructuredDataHandler
 
 
@@ -51,14 +50,35 @@ def render_unstructured_tab(config: dict, handler, viz_engine, dataset_manager):
             key="unstructured_doc_type"
         )
         
-        # Examples directory (optional)
-        st.markdown("**Optional: Examples Directory**")
-        examples_dir = st.text_input(
-            "Path to example documents",
-            value="",
-            help="Directory containing example PDFs and their JSONs for few-shot learning",
-            key="unstructured_examples_dir"
+        # Few-shot example directory selector sourced from packaged folders
+        st.markdown("**Optional: Few-Shot Example Library**")
+        examples_root = Path(__file__).parent / "unstructured"
+        example_options = ["None"]
+        available_dirs = []
+        if examples_root.exists():
+            available_dirs = sorted([p.name for p in examples_root.iterdir() if p.is_dir()])
+            example_options.extend(available_dirs)
+        selected_example_option = st.selectbox(
+            "Select built-in example folder",
+            options=example_options,
+            key="unstructured_examples_dir_select",
+            help="Options are auto-detected from frontend/unstructured"
         )
+        examples_dir = None
+        if selected_example_option != "None":
+            examples_dir = str(examples_root / selected_example_option)
+
+        # Example file uploader
+        st.markdown("**Optional: Upload Few-Shot Example Files**")
+        uploaded_example_files = st.file_uploader(
+            "Upload PDF/JSON pairs to use as few-shot examples",
+            type=["pdf", "json"],
+            accept_multiple_files=True,
+            help="Upload matching PDF and JSON files sharing the same filename (e.g., invoice_01.pdf + invoice_01.json)",
+            key="unstructured_example_uploader"
+        )
+        if uploaded_example_files:
+            st.caption("Example uploads stay in memory for this run only and override the directory path above.")
         
         # File uploader - multiple files
         uploaded_files = st.file_uploader(
@@ -82,6 +102,7 @@ def render_unstructured_tab(config: dict, handler, viz_engine, dataset_manager):
                 uploaded_files,
                 doc_type,
                 examples_dir if examples_dir else None,
+                uploaded_example_files,
                 unstructured_handler
             )
     
@@ -121,7 +142,7 @@ def render_unstructured_tab(config: dict, handler, viz_engine, dataset_manager):
         )
 
 
-def process_documents(uploaded_files, doc_type, examples_dir, unstructured_handler):
+def process_documents(uploaded_files, doc_type, examples_dir, example_files, unstructured_handler):
     """
     Process uploaded PDF documents
     """
@@ -129,18 +150,56 @@ def process_documents(uploaded_files, doc_type, examples_dir, unstructured_handl
         try:
             # Save uploaded files temporarily
             temp_paths = []
+            example_temp_dir_obj = None
+            uploaded_examples_dir = None
             with tempfile.TemporaryDirectory() as temp_dir:
                 for file in uploaded_files:
                     temp_path = os.path.join(temp_dir, file.name)
                     with open(temp_path, 'wb') as f:
                         f.write(file.read())
                     temp_paths.append(temp_path)
+
+                # Handle uploaded example files if provided
+                if example_files:
+                    pdf_stems = set()
+                    json_stems = set()
+                    example_temp_dir_obj = tempfile.TemporaryDirectory()
+                    uploaded_examples_dir = example_temp_dir_obj.name
+                    for example in example_files:
+                        suffix = Path(example.name).suffix.lower()
+                        if suffix not in {'.pdf', '.json'}:
+                            st.warning(f"Skipping unsupported example file: {example.name}")
+                            continue
+                        temp_example_path = os.path.join(uploaded_examples_dir, example.name)
+                        with open(temp_example_path, 'wb') as f:
+                            f.write(example.read())
+                        stem = Path(example.name).stem
+                        if suffix == '.pdf':
+                            pdf_stems.add(stem)
+                        else:
+                            json_stems.add(stem)
+                    matched_pairs = pdf_stems & json_stems
+                    unmatched = (pdf_stems ^ json_stems)
+                    if unmatched:
+                        st.warning(
+                            "Some example files are missing their PDF or JSON counterpart: "
+                            + ", ".join(sorted(unmatched))
+                        )
+                    if matched_pairs:
+                        st.success(f"Using {len(matched_pairs)} uploaded example pair(s) for prompting.")
+                    else:
+                        st.warning("No complete PDF/JSON example pairs found. Uploaded examples will be ignored.")
+                        example_temp_dir_obj.cleanup()
+                        example_temp_dir_obj = None
+                        uploaded_examples_dir = None
+
+                resolved_examples_dir = uploaded_examples_dir or examples_dir
                 
                 # Process all files
                 extracted_data = unstructured_handler.process_multiple_files(
                     temp_paths,
                     doc_type,
-                    examples_dir
+                    resolved_examples_dir
                 )
             
             # Display extraction results
@@ -171,6 +230,9 @@ def process_documents(uploaded_files, doc_type, examples_dir, unstructured_handl
         except Exception as e:
             st.error(f"❌ Processing failed: {str(e)}")
             st.exception(e)
+        finally:
+            if example_temp_dir_obj is not None:
+                example_temp_dir_obj.cleanup()
 
 
 def render_query_section(table_name, handler, viz_engine, config):
